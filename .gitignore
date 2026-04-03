@@ -1,0 +1,9 @@
+venv311/
+__pycache__/
+*.pyc
+.env
+*.pdf
+evaluation_results.json
+.DS_Store
+*.log
+node_modules/
