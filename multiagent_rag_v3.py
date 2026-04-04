@@ -14,24 +14,121 @@ from pathlib import Path
 
 DATA_PATH = Path(__file__).parent / "data" / "enhanced_automated_sentiment_results.json"
 
+# Live API endpoints
+RELEASES_API = "https://releasetrain.io/api/v/"
+REDDIT_API   = "https://releasetrain.io/api/reddit/query/positive"
+CVE_API      = "https://releasetrain.io/api/reddit/query/cve"
+
+SYNONYMS = {
+    "linux":["linux","ubuntu","debian","kernel","fedora","redhat"],
+    "security":["security","vulnerability","cve","patch","exploit","advisory"],
+    "bug":["bug","defect","issue","error","crash","regression"],
+    "fix":["fix","patch","resolve","resolved","hotfix","bugfix"],
+    "update":["update","upgrade","release","version","changelog"],
+    "critical":["critical","severe","high","urgent","important","major"],
+    "python":["python","pip","pypi","cpython"],
+    "chrome":["chrome","chromium","browser","google"],
+    "windows":["windows","microsoft","win11","win10"],
+    "macos":["macos","mac","apple","osx"],
+    "linux":["linux","ubuntu","debian","kernel","fedora"],
+    "nodejs":["nodejs","node","npm","javascript"],
+    "grafana":["grafana","monitoring","dashboard","metrics"],
+    "django":["django","python","web","framework"],
+    "vscode":["vscode","editor","ide","microsoft"],
+}
+
+def expand_terms(query):
+    terms = set(query.lower().split())
+    expanded = set(terms)
+    for t in terms:
+        for base,syns in SYNONYMS.items():
+            if t in syns or t==base: expanded.update(syns)
+    return expanded
+
+def fetch_live_releases(query, limit=5, min_overlap=2):
+    try:
+        import requests as req
+        r = req.get(RELEASES_API, timeout=30)
+        all_v = r.json().get("versions",[]) if r.status_code==200 else []
+        exp = expand_terms(query)
+        scored = []
+        for v in all_v:
+            txt = (" ".join(v.get("versionSearchTags",[])) + " " +
+                   v.get("versionProductName","") + " " +
+                   v.get("versionReleaseNotes","")).lower()
+            overlap = sum(1 for t in exp if t in txt)
+            if overlap >= min_overlap:
+                scored.append((overlap, {
+                    "title": f"{v.get('versionProductName')} v{v.get('versionNumber')} — {v.get('versionReleaseNotes','')[:80]}",
+                    "subreddit": v.get("versionReleaseChannel","release"),
+                    "sentiment": "Negative" if "SECURITY" in v.get("classification",{}).get("securityType",[]) else "Positive",
+                    "score": overlap,
+                    "divergence": 0.0,
+                    "source": "releases",
+                    "url": v.get("versionUrl",""),
+                    "date": v.get("versionReleaseDate",""),
+                }))
+        scored.sort(key=lambda x:x[0], reverse=True)
+        return [d for _,d in scored[:limit]]
+    except Exception as e:
+        return []
+
+def fetch_live_reddit(query, limit=5):
+    try:
+        import requests as req
+        r = req.get(REDDIT_API, timeout=15)
+        all_p = r.json().get("data",[]) if r.status_code==200 else []
+        exp = expand_terms(query)
+        scored = []
+        for p in all_p:
+            txt = (p.get("title","") + " " + p.get("subreddit","")).lower()
+            overlap = sum(1 for t in exp if t in txt)
+            if overlap > 0:
+                scored.append((overlap, {
+                    "title": p.get("title",""),
+                    "subreddit": p.get("subreddit",""),
+                    "sentiment": "Positive" if p.get("metadata",{}).get("predicted",{}).get("positiveScore",0) > 0.5 else "Neutral",
+                    "score": p.get("score",0),
+                    "divergence": 0.0,
+                    "source": "reddit_live",
+                    "url": p.get("url",""),
+                    "date": p.get("created_utc","")[:10],
+                }))
+        scored.sort(key=lambda x:x[0], reverse=True)
+        return [d for _,d in scored[:limit]]
+    except:
+        return []
+
+def fetch_live_cve(query, limit=3):
+    try:
+        import requests as req
+        r = req.get(CVE_API, params={"q":query,"limit":limit}, timeout=30)
+        posts = r.json().get("data",[]) if r.status_code==200 else []
+        return [{
+            "title": p.get("title",""),
+            "subreddit": p.get("subreddit",""),
+            "sentiment": "Negative",
+            "score": p.get("score",0),
+            "divergence": 0.5,
+            "source": "cve",
+            "url": p.get("url",""),
+            "date": p.get("created_utc","")[:10],
+            "detail": (p.get("author_description") or "")[:150],
+        } for p in posts]
+    except:
+        return []
+
 def load_docs():
+    """Load local dataset as fallback only."""
     if DATA_PATH.exists():
         with open(DATA_PATH) as f:
             posts = json.load(f).get("all_analyzed_posts", [])
         return [{"title": p["title"], "subreddit": p["subreddit"],
                  "sentiment": p["title_sentiment"]["label"],
-                 "score": p["score"], "divergence": p["metrics"]["sentiment_divergence"]}
+                 "score": p["score"], "divergence": p["metrics"]["sentiment_divergence"],
+                 "source": "local"}
                 for p in posts]
-    return [
-        {"title": "Critical bug fix: memory leak in Python 3.11",    "subreddit": "Python",    "sentiment": "Negative", "score": 142, "divergence": 0.3},
-        {"title": "Security patch for auth bypass — update now",      "subreddit": "linux",     "sentiment": "Negative", "score": 891, "divergence": 0.5},
-        {"title": "Comfyui v2.1 breaks all custom nodes",            "subreddit": "comfyui",   "sentiment": "Negative", "score": 430, "divergence": 0.6},
-        {"title": "Rust 1.75 — massive performance improvements",     "subreddit": "rust",      "sentiment": "Positive", "score": 723, "divergence": 0.1},
-        {"title": "WordPress 6.4 update causes white screen",         "subreddit": "Wordpress", "sentiment": "Negative", "score": 215, "divergence": 0.4},
-        {"title": "Neovim 0.10 is incredibly fast now",              "subreddit": "neovim",    "sentiment": "Positive", "score": 512, "divergence": 0.2},
-        {"title": "Django 5.0 deprecates old middleware — breaking",  "subreddit": "django",    "sentiment": "Neutral",  "score": 198, "divergence": 0.3},
-        {"title": "VSCode update broke Python debugger for everyone", "subreddit": "vscode",    "sentiment": "Negative", "score": 634, "divergence": 0.5},
-    ]
+    return []
 
 DOCS = load_docs()
 W    = 58
@@ -117,23 +214,40 @@ class RetrieverAgent:
     def run(self, rewritten_query: str, top_k: int = 4) -> list:
         print(f"\n  {self.name}")
         bar()
-        print(f"  Purpose  : Find most relevant docs using FAISS + BGE-Large")
-        print(f"  Searching: {len(DOCS)} Reddit posts about software updates")
+        print(f"  Purpose  : Live API search — Releases + Reddit + CVE")
         pause()
 
-        query_terms = set(rewritten_query.lower().split())
-        scored = sorted(
-            [(len(query_terms & set((d["title"]+" "+d["subreddit"]).lower().split())), d)
-             for d in DOCS],
-            key=lambda x: x[0], reverse=True
-        )
-        results = [d for s, d in scored if s > 0][:top_k] or DOCS[:top_k]
+        # Fetch from all 3 live sources
+        print(f"  Fetching : releasetrain.io/api/v/ ...")
+        releases = fetch_live_releases(rewritten_query, limit=4)
+        
+        print(f"  Fetching : releasetrain.io/api/reddit/query/positive ...")
+        reddit = fetch_live_reddit(rewritten_query, limit=3)
+        
+        print(f"  Fetching : releasetrain.io/api/reddit/query/cve ...")
+        cve = fetch_live_cve(rewritten_query, limit=2)
 
-        print(f"  Found    : {len(results)} relevant documents")
-        for i, doc in enumerate(results, 1):
+        # Combine all live results
+        results = releases + reddit + cve
+
+        # Fallback to local if live APIs return nothing
+        if not results:
+            print(f"  Live APIs unavailable — using local dataset")
+            query_terms = set(rewritten_query.lower().split())
+            scored = sorted(
+                [(len(query_terms & set((d["title"]+" "+d["subreddit"]).lower().split())), d)
+                 for d in DOCS],
+                key=lambda x: x[0], reverse=True
+            )
+            results = [d for s, d in scored if s > 0][:top_k] or DOCS[:top_k]
+
+        print(f"  Found    : {len(results)} results ({len(releases)} releases, {len(reddit)} community, {len(cve)} CVE)")
+        for i, doc in enumerate(results[:top_k], 1):
             icon = "🔴" if doc["sentiment"]=="Negative" else "🟢" if doc["sentiment"]=="Positive" else "🟡"
-            print(f"    {i}. {icon} {doc['title'][:50]}")
-        return results
+            src  = f"[{doc.get('source','?')}]"
+            date = f" ({doc.get('date','')})" if doc.get('date') else ""
+            print(f"    {i}. {icon} {src} {doc['title'][:55]}{date}")
+        return results[:top_k]
 
 # ─────────────────────────────────────────────────────────────
 # AGENT 3 — EVALUATOR (unchanged — RLAIF scoring)
@@ -161,17 +275,61 @@ class EvaluatorAgent:
         pos  = [d for d in docs if d["sentiment"] == "Positive"]
         subs = list(set(d["subreddit"] for d in docs))
 
-        lines = [f'Answer for: "{original_query}"\n']
-        if neg:
-            lines.append(f"  Issues reported ({len(neg)} posts):")
-            for d in neg: lines.append(f"    • {d['title']}")
-        if pos:
-            lines.append(f"\n  Positive updates ({len(pos)} posts):")
-            for d in pos: lines.append(f"    • {d['title']}")
-        if not neg and not pos:
-            lines.append(f"  Most relevant: {docs[0]['title']}")
-        lines.append(f"\n  Communities: {', '.join(subs)}")
+        from datetime import datetime as _dt
+        verified_src = list(set(d.get('source','local') for d in docs))
+        has_live     = any(s in ['releases','reddit_live','cve'] for s in verified_src)
+        confidence   = "HIGH" if quality >= 0.5 else "MEDIUM" if quality >= 0.3 else "LOW"
+        verified_tag = "✅ VERIFIED from live releasetrain.io APIs" if has_live else "⚠️  From local dataset — may not reflect today's data"
 
+        lines = []
+        lines.append(f'Query: "{original_query}"')
+        lines.append(f'Verified: {verified_tag}')
+        lines.append(f'Confidence: {confidence} (quality={quality:.2f}) | Sources: {", ".join(verified_src)}')
+        lines.append(f'Retrieved: {_dt.now().strftime("%Y-%m-%d %H:%M")}')
+        lines.append("")
+
+        if not docs:
+            lines.append("  ❌ NO RESULTS FOUND for this query.")
+            lines.append("  The system could not find verified information matching your question.")
+            lines.append("  Suggestions:")
+            lines.append("    • Try rephrasing — e.g. 'Linux kernel security patch' instead of 'Linux updates'")
+            lines.append("    • Check releasetrain.io directly for latest releases")
+            lines.append("    • Try a more specific version number or CVE ID")
+        elif confidence == "LOW":
+            lines.append("  ⚠️  LOW CONFIDENCE — Results found but may not directly answer your question.")
+            lines.append("  Here are the closest matches found. Please verify independently:")
+            lines.append("")
+            for d in docs[:4]:
+                icon = "🔴" if d["sentiment"]=="Negative" else "🟢"
+                src  = d.get('source','?')
+                date = f" ({d.get('date','')})" if d.get('date') else ''
+                lines.append(f"  {icon} [{src}] {d['title'][:90]}{date}")
+                if d.get('url'): lines.append(f"       🔗 {d['url']}")
+            lines.append("")
+            lines.append("  Alternative suggestions:")
+            lines.append("    • Search CVE database: https://nvd.nist.gov")
+            lines.append("    • Check vendor release notes directly")
+        else:
+            lines.append(f"  ✅ ANSWER — Based on {len(docs)} verified source(s):")
+            lines.append("")
+            if neg:
+                lines.append(f"  🔴 CRITICAL/SECURITY ({len(neg)} item(s)):")
+                for d in neg[:4]:
+                    src  = d.get('source','?')
+                    date = f" ({d.get('date','')})" if d.get('date') else ''
+                    lines.append(f"    • [{src}] {d['title'][:90]}{date}")
+                    if d.get('detail'): lines.append(f"      Detail: {d['detail'][:100]}")
+                    if d.get('url'):    lines.append(f"      🔗 {d['url']}")
+            if pos:
+                lines.append(f"\n  🟢 UPDATES/RELEASES ({len(pos)} item(s)):")
+                for d in pos[:3]:
+                    src  = d.get('source','?')
+                    date = f" ({d.get('date','')})" if d.get('date') else ''
+                    lines.append(f"    • [{src}] {d['title'][:90]}{date}")
+                    if d.get('url'): lines.append(f"      🔗 {d['url']}")
+            lines.append("")
+            src_str = ", ".join(verified_src)
+            lines.append(f"  Data sourced from: {src_str} | releasetrain.io")
         return {"quality": quality, "signal": signal, "answer": "\n".join(lines)}
 
 # ─────────────────────────────────────────────────────────────
