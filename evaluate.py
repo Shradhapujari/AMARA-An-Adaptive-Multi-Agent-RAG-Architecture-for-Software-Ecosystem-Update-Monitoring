@@ -36,7 +36,7 @@ def call_llama(prompt):
 
 def fetch_releases(query,limit=5):
     try:
-        r = requests.get(RELEASES_API,timeout=10)
+        r = requests.get(RELEASES_API,timeout=30)
         all_v = r.json().get("versions",[]) if r.status_code==200 else []
         terms = set(query.lower().split())
         scored = [(len(terms & set((" ".join(v.get("versionSearchTags",[])+[v.get("versionProductName","")])).lower().split())),v) for v in all_v]
@@ -46,7 +46,7 @@ def fetch_releases(query,limit=5):
 
 def fetch_community(query,limit=5):
     try:
-        r = requests.get(REDDIT_API,timeout=10)
+        r = requests.get(REDDIT_API,timeout=30)
         all_p = r.json().get("data",[]) if r.status_code==200 else []
         terms = set(query.lower().split())
         scored = [(len(terms & set((p.get("title","")+p.get("subreddit","")).lower().split())),p) for p in all_p]
@@ -56,23 +56,39 @@ def fetch_community(query,limit=5):
 
 def fetch_cve(query,limit=5):
     try:
-        r = requests.get(CVE_API,params={"q":query,"limit":limit},timeout=10)
+        r = requests.get(CVE_API,params={"q":query,"limit":limit},timeout=30)
         return r.json().get("data",[]) if r.status_code==200 else []
     except: return []
 
 def score(releases,community,cve,keywords):
-    if not releases and not community and not cve: return 0.0
+    # Score based on results count + keyword presence
+    # Even getting results back is a positive signal
     s = 0.0
+
+    # Result count score (0.4 weight) — did we find anything?
+    total = len(releases) + len(community) + len(cve)
+    s += 0.4 * min(total / 10.0, 1.0)
+
+    # Keyword match in releases (0.3 weight)
     if releases:
-        txt = " ".join([v.get("versionProductName","")+v.get("versionReleaseNotes","")+" "+" ".join(v.get("versionSearchTags",[])) for v in releases]).lower()
-        s += 0.4*(sum(1 for k in keywords if k in txt)/max(len(keywords),1))
+        txt = " ".join([
+            v.get("versionProductName","") + " " +
+            v.get("versionReleaseNotes","") + " " +
+            " ".join(v.get("versionSearchTags",[]))
+            for v in releases]).lower()
+        matched = sum(1 for k in keywords if k in txt)
+        s += 0.3 * (matched / max(len(keywords),1))
+
+    # Keyword match in community (0.2 weight)
     if community:
-        txt = " ".join([p.get("title","")+p.get("subreddit","") for p in community]).lower()
-        s += 0.3*(sum(1 for k in keywords if k in txt)/max(len(keywords),1))
+        txt = " ".join([p.get("title","")+" "+p.get("subreddit","") for p in community]).lower()
+        matched = sum(1 for k in keywords if k in txt)
+        s += 0.2 * (matched / max(len(keywords),1))
+
+    # CVE bonus (0.1 weight)
     if cve:
-        txt = " ".join([c.get("title","") for c in cve]).lower()
-        s += 0.2*(sum(1 for k in keywords if k in txt)/max(len(keywords),1))
-    s += 0.1*(sum([bool(releases),bool(community),bool(cve)])/3)
+        s += 0.1
+
     return round(min(s,1.0),3)
 
 def sig(q): return "excellent" if q>=0.6 else "positive" if q>=0.4 else "acceptable" if q>=0.2 else "negative"
