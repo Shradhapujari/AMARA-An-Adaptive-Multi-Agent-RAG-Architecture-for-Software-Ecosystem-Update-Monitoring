@@ -601,32 +601,80 @@ def extract_vendor(query: str) -> list:
 
     return list(dict.fromkeys(found))  # deduplicate preserving order
 
-def fetch_vendor_releases(vendor: str, limit: int = 10) -> list:
-    """Fetch targeted releases for a specific vendor using /api/c/name/{vendor}"""
+def extract_date_from_query(query: str):
+    """Extract a target date from a query like 'on January 1st 2026' or 'in March 2025'."""
+    import re
+    q = query.lower()
+    # Match patterns like "january 1st 2026", "jan 1 2026", "2026-01-01", "20260101"
+    months = {"january":1,"jan":1,"february":2,"feb":2,"march":3,"mar":3,
+              "april":4,"apr":4,"may":5,"june":6,"jun":6,"july":7,"jul":7,
+              "august":8,"aug":8,"september":9,"sep":9,"october":10,"oct":10,
+              "november":11,"nov":11,"december":12,"dec":12}
+    # Pattern: month name + optional day + year
+    for name, num in months.items():
+        pattern = rf"{name}\s*(\d{{1,2}})(?:st|nd|rd|th)?[,\s]+(\d{{4}})"
+        m = re.search(pattern, q)
+        if m:
+            day, year = int(m.group(1)), int(m.group(2))
+            return f"{year}{num:02d}{day:02d}"
+        # Just month + year
+        pattern2 = rf"{name}[,\s]+(\d{{4}})"
+        m2 = re.search(pattern2, q)
+        if m2:
+            year = int(m2.group(1))
+            return f"{year}{num:02d}01"
+    # Pattern: YYYY-MM-DD or YYYYMMDD
+    m3 = re.search(r"(\d{4})-(\d{2})-(\d{2})", q)
+    if m3: return m3.group(1)+m3.group(2)+m3.group(3)
+    m4 = re.search(r"\b(20\d{6})\b", q)
+    if m4: return m4.group(1)
+    return None
+
+def fetch_vendor_releases(vendor: str, limit: int = 10, target_date: str = None) -> list:
+    """Fetch targeted releases for a specific vendor using /api/c/name/{vendor}.
+    If target_date (YYYYMMDD) provided, returns the version active on that date."""
     try:
         url = f"https://releasetrain.io/api/c/name/{vendor.lower()}"
         r = requests.get(url, timeout=15)
         if r.status_code != 200:
             return []
         data = r.json()
-        # Response is {vendor_name: [...releases]}
         releases = []
         for key, items in data.items():
             if isinstance(items, list):
                 releases.extend(items)
+
+        # If date requested: filter to releases on or before that date, take closest
+        if target_date:
+            dated = [(str(v.get("versionReleaseDate","")), v)
+                     for v in releases if str(v.get("versionReleaseDate","")) <= target_date]
+            dated.sort(key=lambda x: x[0], reverse=True)
+            # Only keep canonical torvalds releases if linux
+            if vendor.lower() in ["linux"]:
+                dated = [(d,v) for d,v in dated
+                         if "torvalds" in str(v.get("versionProductName","")).lower()
+                         or "torvalds" in str(v.get("versionProductBrand","")).lower()]
+            releases = [v for _, v in dated[:limit]]
+        else:
+            releases = releases[:limit]
+
         results = []
-        for v in releases[:limit]:
+        for v in releases:
             notes = v.get("versionReleaseNotes", "")
             if isinstance(notes, list): notes = " ".join(notes)
+            date_str = str(v.get("versionReleaseDate",""))[:8]
+            title = f"{v.get('versionProductBrand',vendor)} v{v.get('versionNumber','')} — {str(notes)[:120]}"
+            if target_date:
+                title = f"{v.get('versionProductBrand',vendor)} v{v.get('versionNumber','')} (released {date_str}) — {str(notes)[:80]}"
             results.append({
-                "title":     f"{v.get('versionProductBrand',vendor)} v{v.get('versionNumber','')} — {str(notes)[:120]}",
+                "title":     title,
                 "subreddit": v.get("versionProductBrand", vendor),
                 "sentiment": "Negative" if v.get("isCve") else "Positive",
                 "score":     0,
                 "divergence": 0.0,
                 "source":    "vendor_releases",
                 "url":       v.get("versionUrl", ""),
-                "date":      str(v.get("versionReleaseDate", ""))[:8],
+                "date":      date_str,
                 "detail":    str(notes)[:150],
                 "verified":  True,
                 "tier":      1,
@@ -802,6 +850,11 @@ class RetrieverAgent:
         # ── STEP 2: Targeted vendor queries (if vendor found) ──
         vendor_releases = []
         vendor_reddit   = []
+        # Extract date from query if present
+        target_date = extract_date_from_query(rewritten_query) or extract_date_from_query(original_query)
+        if target_date:
+            print(f"  Date     : Detected → {target_date}")
+
         if vendors:
             # Expand vendor to related subreddits for better coverage
             VENDOR_SUBREDDITS = {
@@ -818,7 +871,7 @@ class RetrieverAgent:
             }
             for v in vendors[:2]:  # max 2 vendors
                 print(f"  Fetching : releasetrain.io/api/c/name/{v} ...")
-                vendor_releases += fetch_vendor_releases(v, limit=8)
+                vendor_releases += fetch_vendor_releases(v, limit=8, target_date=target_date)
                 # Search all related subreddits for this vendor
                 subs_to_search = VENDOR_SUBREDDITS.get(v, [v])
                 for sub in subs_to_search[:3]:
