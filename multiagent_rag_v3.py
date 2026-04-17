@@ -518,6 +518,47 @@ VENDOR_ALIASES = {
     "linux": "linux", "ubuntu": "ubuntu", "debian": "debian",
     "fedora": "fedora", "kernel": "linux",
     "android": "android", "pixel": "android",
+    "orcaslicer": "orcaslicer", "tapo": "tapo",
+    "truenas": "truenas", "aws": "aws", "spotify": "spotify",
+    "tinder": "tinder", "otbr": "homeassistant",
+    "neovim": "neovim", "nvim": "neovim",
+    "microsoftedge": "MicrosoftEdge",
+}
+
+VENDOR_STOP_WORDS = {
+    "version","text","firmware","updater","arrow","maybe","server",
+    "desktop","downloads","core","config","plugins","software","update",
+    "latest","release","new","fix","bug","issue","error","crash",
+    "install","upgrade","support","help","question","problem","using",
+    "after","before","when","how","why","what","where","which","can",
+    "will","does","did","has","have","been","some","many","most","all",
+    "any","get","set","run","use","make","take","need","want","know",
+    "think","see","look","try","back","first","last","next","same",
+    "other","good","bad","big","small","free","open","automattic",
+    "trash","dead","broken","terrible","stupid","awful","great",
+}
+
+# Subreddit → vendor fallback map
+SUBREDDIT_VENDOR_MAP = {
+    "microsoftedge": "MicrosoftEdge",
+    "androidquestions": "android",
+    "androiddev": "android",
+    "homenetworking": "linux",
+    "homelab": "linux",
+    "aws": "aws",
+    "neovim": "neovim",
+    "linuxquestions": "linux",
+    "applehelp": "ios",
+    "homeassistant": "homeassistant",
+    "fedora": "fedora",
+    "debian": "debian",
+    "ubuntu": "ubuntu",
+    "chrome": "chrome",
+    "firefox": "firefox",
+    "openclaw": "openclaw",
+    "comfyui": "comfyui",
+    "ollama": "ollama",
+    "ubiquiti": "Ubiquiti",
     # Hardware/Networking
     "ubiquiti": "Ubiquiti", "unifi": "Ubiquiti", "g6": "Ubiquiti",
     "bullet": "Ubiquiti", "udr": "Ubiquiti", "udm": "Ubiquiti",
@@ -544,7 +585,7 @@ VENDOR_ALIASES = {
     "nginx": "nginx",
 }
 
-def extract_vendor(query: str) -> list:
+def extract_vendor(query: str, _subreddit_hint: str = "") -> list:
     """
     Extract vendor/product names from a query.
     Returns list of matched vendor names (lowercase).
@@ -591,13 +632,21 @@ def extract_vendor(query: str) -> list:
             if len(word) > 3 and word in _SUBREDDIT_NAMES:
                 found.append(word)
 
-    # 4. Fuzzy match as last resort (only if confident)
+    # 4. Fuzzy match as last resort — skip stop-words
     if not found and _VENDOR_NAMES:
-        words = [w for w in q_lower.split() if len(w) > 4]
+        words = [w for w in q_lower.split()
+                 if len(w) > 4 and w not in VENDOR_STOP_WORDS]
         for word in words:
             matches = difflib.get_close_matches(word, _VENDOR_NAMES, n=1, cutoff=0.92)
-            if matches:
+            if matches and matches[0].lower() not in VENDOR_STOP_WORDS:
                 found.append(matches[0])
+                break  # take first confident match only
+
+    # 5. Subreddit fallback — use subreddit name if still no vendor found
+    if not found and _subreddit_hint:
+        sub_vendor = SUBREDDIT_VENDOR_MAP.get(_subreddit_hint.lower())
+        if sub_vendor:
+            found.append(sub_vendor)
 
     return list(dict.fromkeys(found))  # deduplicate preserving order
 
