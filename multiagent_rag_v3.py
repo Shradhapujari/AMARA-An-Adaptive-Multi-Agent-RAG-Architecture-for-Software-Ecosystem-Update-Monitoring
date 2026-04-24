@@ -598,18 +598,21 @@ def extract_vendor(query: str, _subreddit_hint: str = "") -> list:
 
     # 0a. Multi-word and short aliases — checked BEFORE stop-word filter
     MULTI_WORD = {
-        "g6 bullet":      "Ubiquiti",
-        "home assistant": "homeassistant",
-        "home-assistant": "homeassistant",
-        "hassio":         "homeassistant",
-        "microsoft edge": "MicrosoftEdge",
-        "ace step":       "comfyui",
-        "ace-step":       "comfyui",
-        "proxmox ve":     "Proxmox",
-        "synology nas":   "Synology",
-        "nas stopped":    "Synology",
-        "pfsense ce":     "pfsense",
-        "voip issues":    "pfsense",
+        "g6 bullet":        "Ubiquiti",
+        "home assistant":   "homeassistant",
+        "home-assistant":   "homeassistant",
+        "hassio":           "homeassistant",
+        "microsoft edge":   "MicrosoftEdge",
+        "ace step":         "comfyui",
+        "ace-step":         "comfyui",
+        "proxmox ve":       "Proxmox",
+        "synology nas":     "Synology",
+        "nas stopped":      "Synology",
+        "pfsense ce":       "pfsense",
+        "voip issues":      "pfsense",
+        "money pit":        "openclaw",
+        "openclaw":         "openclaw",
+        "open claw":        "openclaw",
     }
     for phrase, pvendor in MULTI_WORD.items():
         if phrase in q_lower:
@@ -979,10 +982,10 @@ def pause(): time.sleep(0.4)
 # OLLAMA HELPER — calls Llama 3.1 locally
 # ─────────────────────────────────────────────────────────────
 
-def call_llama(prompt: str) -> str:
-    """Call Llama 3.1 via Ollama REST API running locally."""
+def call_llama(prompt: str, model: str = "llama3.1") -> str:
+    """Call LLM via Ollama REST API running locally."""
     payload = json.dumps({
-        "model": "llama3.1",
+        "model": model,
         "prompt": prompt,
         "stream": False,
         "options": {"temperature": 0}
@@ -1280,6 +1283,19 @@ class EvaluatorAgent:
                 if detail: entry += f"\n  Content: {detail}"
                 if cve:    entry += f"\n  CVE: {cve}"
                 context_parts.append(entry)
+            # ── Filter CVE docs for non-security/opinion queries ──────────────
+            q_low_ctx = original_query.lower()
+            is_security_q = any(w in q_low_ctx for w in [
+                "cve","vulnerability","exploit","security","patch","advisory",
+                "malware","virus","breach","attack","threat","zero-day"
+            ])
+            if not is_security_q:
+                # Remove CISA/CVE docs from context for non-security queries
+                context_parts = [p for p in context_parts
+                                 if "CISA" not in p and "CVE-" not in p
+                                 and "exploit" not in p.lower()
+                                 and "vulnerability" not in p.lower()]
+
             context = "\n\n".join(context_parts) if context_parts else "No direct matches found."
 
 
@@ -1289,8 +1305,9 @@ class EvaluatorAgent:
 
             # Detect query type to give Llama the right instructions
             q_low = original_query.lower()
-            is_version_query = any(w in q_low for w in ["latest version","what version","current version","which version","version of"])
-            is_bug_query     = any(w in q_low for w in ["broken","crash","fail","issue","unstable","doesnt load","not working","error","bug","freeze","slow","dead","missing","disappeared"])
+            is_version_query  = any(w in q_low for w in ["latest version","what version","current version","which version","version of"])
+            is_bug_query      = any(w in q_low for w in ["broken","crash","fail","issue","unstable","doesnt load","not working","error","bug","freeze","slow","dead","missing","disappeared"])
+            is_opinion_query  = any(w in q_low for w in ["done","money pit","frustrated","sick of","tired of","switched","gave up","moved on","worth it","recommend","should i","is it good","how rough","thoughts on","opinion","experience with"])
 
             if is_version_query:
                 version_instruction = """IMPORTANT: This is a VERSION query.
@@ -1303,6 +1320,17 @@ Do NOT say you could not find it. The version is in the sources."""
 State whether this issue is confirmed by community posts or release notes.
 If confirmed: say "This is a known issue. [what sources say]. Verdict: CONFIRMED."
 If not found: say "No matching reports found for this specific issue." """
+            elif is_opinion_query:
+                version_instruction = """IMPORTANT: This is a COMMUNITY SENTIMENT query.
+STRICT RULES FOR THIS QUERY TYPE:
+1. Use ONLY words and phrases that appear in the source documents below
+2. Do NOT add any interpretation, inference, or context not in the sources
+3. Quote the post title directly if it matches the query
+4. If comments exist with high scores, quote them directly (word for word)
+5. If no comments: say "Post title confirms: [exact title]. No comment data available."
+6. NEVER say "too expensive" or add reasons unless they appear in sources
+7. Format: "Community post confirms: [quote title]. [quote top comment if available]."
+NEVER refuse. NEVER add context not in sources."""
             else:
                 version_instruction = """Answer directly from the sources. Be specific and factual.
 If release notes are present, state what changed. If community posts match, summarize them."""
@@ -1315,6 +1343,11 @@ STRICT RULES:
 - NEVER say "I couldn't find" if at least one source was retrieved
 - NEVER invent version numbers, CVE IDs, or fixes not in the sources
 - NEVER say "it appears" or "it is likely" — only state what sources confirm
+- NEVER refuse to answer or say you cannot provide information
+- NEVER mention "exploit" or "vulnerability" when answering opinion/community queries
+- NEVER add words, reasons, or context not explicitly present in the sources
+- NEVER say "users report" or "the community feels" unless a source says it exactly
+- If the query is about community experience, quote sources directly
 - Keep answer to 2-3 sentences maximum
 
 User question: "{original_query}"
@@ -1325,11 +1358,25 @@ Sources retrieved:
 Answer:"""
 
             print(f"  Synthesizing answer with Llama 3.1...")
-            llm_answer = call_llama(llm_prompt)
+            llm_answer = call_llama(llm_prompt, model="mistral")
             # Separate by trust tier
             tier1_docs = [d for d in docs if d.get("source","") in TIER1]
             tier2_docs = [d for d in docs if d.get("source","") in TIER2]
             unverified = [d for d in docs if d.get("source","") not in TIER1+TIER2]
+
+            # ── MOD A: Find best top comment across all Reddit docs ──────
+            best_comment = None
+            best_comment_score = 0
+            best_comment_url = ""
+            best_comment_sub = ""
+            for _doc in (tier2_docs + unverified):
+                tc = _doc.get("top_comment", "")
+                ts = int(_doc.get("top_comment_score", 0))
+                if tc and ts > 10 and ts > best_comment_score:
+                    best_comment = tc
+                    best_comment_score = ts
+                    best_comment_url = _doc.get("url", "")
+                    best_comment_sub = _doc.get("subreddit", "")
 
             lines.append(f"  ✅ ANSWER (synthesized by Llama 3.1):")
             lines.append("")
@@ -1349,6 +1396,13 @@ Answer:"""
                     if d.get('url'):    lines.append(f"      🔗 {d['url']}")
                     if d.get('action'): lines.append(f"      ⚡ Action: {d['action'][:80]}")
                 lines.append("")
+
+            # ── MOD A: Top comment block ─────────────────────────────
+            if best_comment and best_comment_score > 10:
+                lines.append("")
+                lines.append(f"  💬 TOP COMMUNITY ANSWER [r/{best_comment_sub}] ↑{best_comment_score}")
+                lines.append(f'     "{best_comment[:200]}"')
+                lines.append(f"     🔗 {best_comment_url}")
 
             if tier2_docs:
                 lines.append(f"  🟡 COMMUNITY SOURCES ({len(tier2_docs)}) — not officially verified:")
@@ -1489,7 +1543,35 @@ def auto_mode(limit=5):
     if not questions:
         print("  No questions returned from API.")
         return
-    print(f"  Found {len(questions)} live questions — answering top {limit}:")
+    # ── MOD B: Score and rank by trending/usefulness ─────────────────
+    from datetime import datetime, timedelta
+    TOPIC_KW = ["update","version","broken","fix","install","upgrade",
+                "crash","not working","after update","latest","error",
+                "bug","fail","issue","stopped","missing","slow"]
+    cutoff_7d = (datetime.now() - timedelta(days=7)).isoformat()
+
+    def question_score(q):
+        title   = q.get("title","").lower()
+        upr     = float(q.get("upvote_ratio", 0) or 0)
+        nc      = int(q.get("num_comments", 0) or 0)
+        sc      = int(q.get("score", 0) or 0)
+        created = q.get("created_utc","")
+        sub     = q.get("subreddit","")
+        s = (upr * 10) + (nc * 0.5) + (sc * 0.1)
+        if any(kw in title for kw in TOPIC_KW): s += 5
+        if nc > 5:                               s += 3
+        if created and created >= cutoff_7d:     s += 2
+        v = extract_vendor(q.get("title",""), _subreddit_hint=sub)
+        if not v and sc < 5:                     s -= 5
+        return round(s, 2)
+
+    for q in questions:
+        q["_trend_score"] = question_score(q)
+    questions.sort(key=lambda x: x.get("_trend_score", 0), reverse=True)
+    questions = [q for q in questions if q.get("_trend_score", 0) > 0]
+
+    print(f"  Ranked {len(questions)} questions by trending score — showing top {limit}:")
+    print(f"  (sorted by: upvotes + comments + topic relevance + recency)")
     for i, q in enumerate(questions[:limit], 1):
         title = q.get("title", q.get("query", ""))
         sub   = q.get("subreddit", "")
@@ -1497,7 +1579,7 @@ def auto_mode(limit=5):
         if not title:
             continue
         print("\n" + "-"*58)
-        print(f"  [{i}/{limit}]  r/{sub}")
+        print(f"  [{i}/{limit}]  r/{sub} [trend={q.get('_trend_score',0)}] ↑{q.get('score',0)} 💬{q.get('num_comments',0)}")
         print(f"  Q: {title}")
         if url:
             print(f"  Reddit: {url}")
