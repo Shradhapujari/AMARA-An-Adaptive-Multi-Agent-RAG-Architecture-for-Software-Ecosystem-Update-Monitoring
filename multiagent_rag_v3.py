@@ -535,7 +535,7 @@ VENDOR_STOP_WORDS = {
     "any","get","set","run","use","make","take","need","want","know",
     "think","see","look","try","back","first","last","next","same",
     "other","good","bad","big","small","free","open","automattic",
-    "trash","dead","broken","terrible","stupid","awful","great","performance","behavior","recent","update","patch","stable","unstable","issue","security","release","releases","software","latest","fixed","bugs","community","reaction","feedback","negative","positive","versions","version","offline","execute","tasks","after","update","fail","fails","failing",
+    "trash","dead","broken","terrible","stupid","awful","great","performance","behavior","recent","update","patch","stable","unstable","issue","security","release","releases","software","latest","fixed","bugs","community","reaction","feedback","negative","positive","versions","version","offline","execute","tasks","after","update","fail","fails","failing","upgrade","upgrading","upgraded","issue","issues","problem","problems","task","turning","turns",
 }
 
 # Subreddit → vendor fallback map
@@ -547,7 +547,7 @@ SUBREDDIT_VENDOR_MAP = {
     "homelab": "linux",
     "aws": "aws",
     "neovim": "neovim",
-    "linuxquestions": "linux",
+    "linuxquestions": "linux", "sysadmin": "linux", "selfhosted": "linux", "homelab": "linux",
     "applehelp": "ios",
     "homeassistant": "homeassistant", "home assistant": "homeassistant", "hass": "homeassistant", "ha": "homeassistant", "hassio": "homeassistant",
     "fedora": "fedora",
@@ -562,7 +562,7 @@ SUBREDDIT_VENDOR_MAP = {
     # Hardware/Networking
     "ubiquiti": "Ubiquiti", "unifi": "Ubiquiti", "g6": "Ubiquiti", "g6 bullet": "Ubiquiti",
     "bullet": "Ubiquiti", "udr": "Ubiquiti", "udm": "Ubiquiti", "uap": "Ubiquiti", "edgerouter": "Ubiquiti",
-    "proxmox": "Proxmox", "nginx": "nginx", "apache": "apache",
+    "proxmox": "Proxmox", "pfsense": "pfsense", "synology": "Synology", "truenas": "TrueNAS", "opnsense": "OPNsense", "nginx": "nginx", "apache": "apache",
     "docker": "docker",
     # AI/ML tools
     "ollama": "ollama",
@@ -606,6 +606,10 @@ def extract_vendor(query: str, _subreddit_hint: str = "") -> list:
         "ace step":       "comfyui",
         "ace-step":       "comfyui",
         "proxmox ve":     "Proxmox",
+        "synology nas":   "Synology",
+        "nas stopped":    "Synology",
+        "pfsense ce":     "pfsense",
+        "voip issues":    "pfsense",
     }
     for phrase, pvendor in MULTI_WORD.items():
         if phrase in q_lower:
@@ -625,7 +629,7 @@ def extract_vendor(query: str, _subreddit_hint: str = "") -> list:
             "comfyui": "comfyui", "ubiquiti": "Ubiquiti",
             "openclaw": "openclaw", "ollama": "ollama",
             "homeassistant": "homeassistant", "home assistant": "homeassistant", "hass": "homeassistant", "ha": "homeassistant", "hassio": "homeassistant", "applehelp": "ios",
-            "linuxquestions": "linux", "fedora": "linux",
+            "linuxquestions": "linux", "sysadmin": "linux", "selfhosted": "linux", "homelab": "linux", "fedora": "linux",
             "linux": "linux", "ubuntu": "ubuntu",
         }
         if sub_name in SUB_TO_VENDOR:
