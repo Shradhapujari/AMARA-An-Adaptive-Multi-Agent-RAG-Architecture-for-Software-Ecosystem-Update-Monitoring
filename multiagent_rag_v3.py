@@ -598,21 +598,31 @@ def extract_vendor(query: str, _subreddit_hint: str = "") -> list:
 
     # 0a. Multi-word and short aliases — checked BEFORE stop-word filter
     MULTI_WORD = {
-        "g6 bullet":        "Ubiquiti",
-        "home assistant":   "homeassistant",
-        "home-assistant":   "homeassistant",
-        "hassio":           "homeassistant",
-        "microsoft edge":   "MicrosoftEdge",
-        "ace step":         "comfyui",
-        "ace-step":         "comfyui",
-        "proxmox ve":       "Proxmox",
-        "synology nas":     "Synology",
-        "nas stopped":      "Synology",
-        "pfsense ce":       "pfsense",
-        "voip issues":      "pfsense",
-        "money pit":        "openclaw",
-        "openclaw":         "openclaw",
-        "open claw":        "openclaw",
+        "g6 bullet":          "Ubiquiti",
+        "home assistant":     "homeassistant",
+        "home-assistant":     "homeassistant",
+        "hassio":             "homeassistant",
+        "microsoft edge":     "MicrosoftEdge",
+        "ace step":           "comfyui",
+        "ace-step":           "comfyui",
+        "comfy ui":           "comfyui",
+        "comfyui":            "comfyui",
+        "stable diffusion":   "comfyui",
+        "gguf":               "comfyui",
+        "proxmox ve":         "Proxmox",
+        "synology nas":       "Synology",
+        "synology":           "Synology",
+        "nas stopped":        "Synology",
+        "nas unreachable":    "Synology",
+        "pfsense ce":         "pfsense",
+        "voip issues":        "pfsense",
+        "money pit":          "openclaw",
+        "openclaw":           "openclaw",
+        "open claw":          "openclaw",
+        "t-mobile":           "tmobile",
+        "neovim":             "neovim",
+        "nvim":               "neovim",
+        "ollama":             "ollama",
     }
     for phrase, pvendor in MULTI_WORD.items():
         if phrase in q_lower:
@@ -1053,14 +1063,18 @@ Rewritten query:"""
 class RetrieverAgent:
     name = "📚  Retriever Agent"
 
-    def run(self, rewritten_query: str, top_k: int = 4) -> list:
+    def run(self, rewritten_query: str, top_k: int = 4, original_query: str = "") -> list:
         print(f"\n  {self.name}")
         bar()
         print(f"  Purpose  : Live API search — Releases + Reddit + CVE")
         pause()
 
         # ── STEP 1: Extract vendor/product from query (Dr. Berhe) ──
-        vendors = extract_vendor(rewritten_query)
+        # Always extract vendor from ORIGINAL query (not rewritten)
+        # Rewritten query may contain words like "fixes","release","latest"
+        # that confuse vendor detection
+        _query_for_vendor = original_query if original_query else rewritten_query
+        vendors = extract_vendor(_query_for_vendor)
         if vendors:
             print(f"  Vendor   : Detected → {vendors}")
         else:
@@ -1459,7 +1473,7 @@ class ManagerAgent:
         print(f"    Step 4 → if quality low, trigger retry")
 
         rewrite = self.rewriter.run(query)
-        docs    = self.retriever.run(rewrite["rewritten"])
+        docs    = self.retriever.run(rewrite["rewritten"], original_query=query)
         result  = self.evaluator.run(docs, query)
 
         if "negative" in result["signal"] and "retry" not in query:
