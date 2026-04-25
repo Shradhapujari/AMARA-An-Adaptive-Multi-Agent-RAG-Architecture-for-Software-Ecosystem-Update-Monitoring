@@ -1,0 +1,172 @@
+[
+  {
+    "type": "Reddit",
+    "id": 1,
+    "query": "After 3 months, I\u2019m done. OpenClaw has officially become a money pit",
+    "sub": "openclaw",
+    "trend": 95.3,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"After 3 months, I\u2019m done. OpenClaw has officially become a money pit\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.50) | Sources: cisa_kev, vendor_releases\nRetrieved: 2026-04-24 20:58\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  Community post con"
+  },
+  {
+    "type": "Reddit",
+    "id": 2,
+    "query": "How Rough Are You?",
+    "sub": "networking",
+    "trend": 74.6,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"How Rough Are You?\"\nVerified: \u2705 VERIFIED from live releasetrain.io APIs\nConfidence: HIGH (quality=0.50) | Sources: releases, vendor_reddit\nRetrieved: 2026-04-24 20:58\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  Community post confirms: \"Good software is still made with blood and tears.\" No co"
+  },
+  {
+    "type": "Reddit",
+    "id": 3,
+    "query": "What\u2019s one \u201csmall\u201d IT task that somehow always turns into a full-day disaster?",
+    "sub": "sysadmin",
+    "trend": 70.1,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"What\u2019s one \u201csmall\u201d IT task that somehow always turns into a full-day disaster?\"\nVerified: \u2705 VERIFIED from live releasetrain.io APIs\nConfidence: MEDIUM (quality=0.30) | Sources: releases\nRetrieved: 2026-04-24 20:59\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  Based on various IT forums and disc"
+  },
+  {
+    "type": "Reddit",
+    "id": 4,
+    "query": "IT support by day, trail escape by weekend - anyone else surviving like this?",
+    "sub": "sysadmin",
+    "trend": 65.1,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"IT support by day, trail escape by weekend - anyone else surviving like this?\"\nVerified: \u2705 VERIFIED from live releasetrain.io APIs\nConfidence: HIGH (quality=0.50) | Sources: releases, vendor_reddit\nRetrieved: 2026-04-24 20:59\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The user seems to be re"
+  },
+  {
+    "type": "Reddit",
+    "id": 5,
+    "query": "Every OpenClaw update is a surprise party",
+    "sub": "openclaw",
+    "trend": 60.9,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"Every OpenClaw update is a surprise party\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.50) | Sources: vendor_releases\nRetrieved: 2026-04-24 20:59\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  Every OpenClaw update since April 9, 2026 includes chan"
+  },
+  {
+    "type": "Reddit",
+    "id": 6,
+    "query": "what plugin did you mass-uninstall everything else for",
+    "sub": "neovim",
+    "trend": 60.5,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"what plugin did you mass-uninstall everything else for\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.50) | Sources: cisa_kev, vendor_releases\nRetrieved: 2026-04-24 20:59\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  No specific plugin was identifie"
+  },
+  {
+    "type": "Reddit",
+    "id": 7,
+    "query": "openclaw crossed 500k downloads a day this week. here are the 5 things nobody tells you when you're one of them",
+    "sub": "openclaw",
+    "trend": 58.2,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"openclaw crossed 500k downloads a day this week. here are the 5 things nobody tells you when you're one of them\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.65) | Sources: vendor_reddit, vendor_releases\nRetrieved: 2026-04-24 20:59\n\n  \u2705 ANSWER ("
+  },
+  {
+    "type": "Reddit",
+    "id": 8,
+    "query": "Why I can never be a sysadmin; or, Why is software like this?",
+    "sub": "sysadmin",
+    "trend": 53.0,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"Why I can never be a sysadmin; or, Why is software like this?\"\nVerified: \u2705 VERIFIED from live releasetrain.io APIs\nConfidence: HIGH (quality=0.50) | Sources: releases, vendor_reddit\nRetrieved: 2026-04-24 21:00\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The user's role as a sysadmin involves "
+  },
+  {
+    "type": "Reddit",
+    "id": 9,
+    "query": "I downloaded Tahoe on Macbook Air M1 8GB and it's .... genuinely fast?",
+    "sub": "MacOS",
+    "trend": 44.3,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"I downloaded Tahoe on Macbook Air M1 8GB and it's .... genuinely fast?\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.50) | Sources: vendor_releases\nRetrieved: 2026-04-24 21:00\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The Tahoe-LAFS project doe"
+  },
+  {
+    "type": "Reddit",
+    "id": 10,
+    "query": "PC has slow wired speeds on new T-Mobile Fiber install. All cables/devices tested, issue appears to be host-side. Need advice going forward.",
+    "sub": "HomeNetworking",
+    "trend": 42.6,
+    "verdict": "ANSWERED",
+    "answer": "Query: \"PC has slow wired speeds on new T-Mobile Fiber install. All cables/devices tested, issue appears to be host-side. Need advice going forward.\"\nVerified: \u2705 VERIFIED from live releasetrain.io APIs\nConfidence: HIGH (quality=0.50) | Sources: releases, vendor_reddit\nRetrieved: 2026-04-24 21:00\n\n  "
+  },
+  {
+    "type": "Manual",
+    "id": 1,
+    "query": "What is the latest version of Linux?",
+    "expected": "v7.0.0",
+    "verdict": "CORRECT",
+    "answer": "Query: \"What is the latest version of Linux?\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.50) | Sources: vendor_releases\nRetrieved: 2026-04-24 21:01\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The latest version of Linux is v7.0.0, released on 20260424."
+  },
+  {
+    "type": "Manual",
+    "id": 2,
+    "query": "What is the latest version of Firefox?",
+    "expected": "v149.0.x or v150",
+    "verdict": "CORRECT",
+    "answer": "Query: \"What is the latest version of Firefox?\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.50) | Sources: vendor_releases\nRetrieved: 2026-04-24 21:01\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The latest version of Firefox is v150.0.0, released on 202"
+  },
+  {
+    "type": "Manual",
+    "id": 3,
+    "query": "What was the Linux version on January 1st 2026?",
+    "expected": "v6.18.0",
+    "verdict": "CORRECT",
+    "answer": "Query: \"What was the Linux version on January 1st 2026?\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.50) | Sources: vendor_releases\nRetrieved: 2026-04-24 21:01\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The Linux version on January 1st, 2026 was torval"
+  },
+  {
+    "type": "Manual",
+    "id": 4,
+    "query": "Siri fails offline after iOS 26.4 update",
+    "expected": "iOS 26.4 context",
+    "verdict": "CORRECT",
+    "answer": "Query: \"Siri fails offline after iOS 26.4 update\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.65) | Sources: vendor_reddit, vendor_releases\nRetrieved: 2026-04-24 21:02\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  This is not a known issue specifically ab"
+  },
+  {
+    "type": "Manual",
+    "id": 5,
+    "query": "Updated to kernel 6.19.11 and now desktop doesnt load",
+    "expected": "linux/kernel context",
+    "verdict": "CORRECT",
+    "answer": "Query: \"Updated to kernel 6.19.11 and now desktop doesnt load\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.50) | Sources: vendor_releases\nRetrieved: 2026-04-24 21:02\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  No matching reports found for this specific"
+  },
+  {
+    "type": "Manual",
+    "id": 6,
+    "query": "G6 Bullet unstable?",
+    "expected": "Ubiquiti context",
+    "verdict": "CORRECT",
+    "answer": "Query: \"G6 Bullet unstable?\"\nVerified: \u2705 VERIFIED from live releasetrain.io APIs\nConfidence: MEDIUM (quality=0.30) | Sources: releases\nRetrieved: 2026-04-24 21:02\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  No matching reports found for this specific issue in the provided sources.\n\n  \u2705 VERIFIED SOURC"
+  },
+  {
+    "type": "Manual",
+    "id": 7,
+    "query": "Home Assistant update broke my thermostat",
+    "expected": "Home Assistant context",
+    "verdict": "CORRECT",
+    "answer": "Query: \"Home Assistant update broke my thermostat\"\nVerified: \u2705 VERIFIED from live releasetrain.io APIs\nConfidence: HIGH (quality=0.50) | Sources: releases, vendor_reddit\nRetrieved: 2026-04-24 21:02\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The provided sources do not indicate that a recent Home Ass"
+  },
+  {
+    "type": "Manual",
+    "id": 8,
+    "query": "What is the latest version of ollama?",
+    "expected": "ollama + version number",
+    "verdict": "CORRECT",
+    "answer": "Query: \"What is the latest version of ollama?\"\nVerified: \u2705 VERIFIED from live releasetrain.io APIs\nConfidence: HIGH (quality=0.71) | Sources: reddit_live, cisa_kev, vendor_releases\nRetrieved: 2026-04-24 21:03\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The latest version of Ollama is not explicitly s"
+  },
+  {
+    "type": "Manual",
+    "id": 9,
+    "query": "Firefox settings being reset after update",
+    "expected": "Firefox v149 context",
+    "verdict": "CORRECT",
+    "answer": "Query: \"Firefox settings being reset after update\"\nVerified: \u26a0\ufe0f  From local dataset \u2014 may not reflect today's data\nConfidence: HIGH (quality=0.65) | Sources: vendor_reddit, vendor_releases\nRetrieved: 2026-04-24 21:03\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The community post does not directly add"
+  },
+  {
+    "type": "Manual",
+    "id": 10,
+    "query": "GGUF in latest versions of ComfyUI",
+    "expected": "ComfyUI context",
+    "verdict": "CORRECT",
+    "answer": "Query: \"GGUF in latest versions of ComfyUI\"\nVerified: \u2705 VERIFIED from live releasetrain.io APIs\nConfidence: HIGH (quality=0.50) | Sources: reddit_live, vendor_releases\nRetrieved: 2026-04-24 21:03\n\n  \u2705 ANSWER (synthesized by Llama 3.1):\n\n  The latest version of ComfyUI is not explicitly stated in the"
+  }
+]
