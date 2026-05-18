@@ -421,7 +421,7 @@ def fetch_reddit_subreddit(query, subreddits=None, limit=5):
                 subreddits = ["techsupport","sysadmin","software"]
 
         results = []
-        headers = {"User-Agent": "AMARA-Research/1.0"}
+        headers = {"User-Agent": "MultiAgentRAG-Research/1.0"}
         for sub in subreddits[:2]:  # max 2 subreddits
             try:
                 url = f"https://www.reddit.com/r/{sub}/search.json"
@@ -1696,7 +1696,7 @@ def auto_mode(limit=5):
             print(f"  🔗  Reddit: {url}")
         print("─"*58)
 
-        # Run through the full AMARA pipeline
+        # Run through the full Multi-Agent RAG System pipeline
         # Prepend subreddit context to help vendor detection
         query_with_context = f"[r/{sub}] {title}" if sub else title
         run_demo(query_with_context)
