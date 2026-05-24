@@ -1,538 +1,271 @@
-# Indoor Light Notification System
+# AMARA: An Adaptive Multi-Agent RAG Architecture for Software Ecosystem Update Monitoring
 
-[![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)](https://iot-light-sensor.onrender.com)
-[![API Version](https://img.shields.io/badge/API-v1.0-blue)](https://iot-light-sensor.onrender.com/api/docs)
-[![Architecture](https://img.shields.io/badge/Architecture-Monolithic%20REST-orange)](https://github.com/SE4CPS/IoT-Light-Sensor)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+> Multi-agent RAG system that answers software update questions — *"are there known Siri issues after iOS 26.4?"* — by integrating release notes, security advisories, and community discussions, with a self-improving retrieval memory that learns from its own outcomes. Runs locally on Llama 3.1 8B.
 
-An IoT-enabled indoor lighting monitoring and control system that measures ambient light levels, tracks usage patterns, and provides intelligent notifications. Built with ESP32 microcontrollers, Flask backend, MongoDB Atlas, and real-time web dashboard.
+📄 **Paper:** *An Adaptive Multi-Agent RAG Architecture for Software Ecosystem Update Monitoring* — AgenticSE '26 (Workshop on Agentic Software Engineering), San Jose, CA, May 26, 2026.
 
----
-
-## 🌟 Features
-
-- **Multi-Room Monitoring** - Track 6 rooms simultaneously (living, bedroom, kitchen, bathroom, office, garage)
-- **Real-Time Data Collection** - ESP32 sensors report every 60 seconds
-- **Power Monitoring** - Track voltage, current, and power consumption
-- **Motion Detection** - PIR sensor integration for occupancy tracking
-- **Web Dashboard** - Interactive Chart.js visualizations
-- **REST API** - 15 fully documented endpoints with Swagger
-- **User Authentication** - Secure login with Werkzeug password hashing
-- **Usage Analytics** - Daily, weekly, and monthly statistics
-- **Zero Cost** - Free tier infrastructure ($0/month)
+👩‍💻 **Authors:** Shradha Devendra Pujari, Dr. Solomon Berhe — University of the Pacific, Department of Computer Science.
 
 ---
 
-## 🏗️ Architecture
+## TL;DR
 
-### Current Implementation: Monolithic Layered REST API
+- **+17.2%** retrieval quality over a single-agent RAG baseline (paired *t*-test, *t*(49) = 2.32, *p* = 0.020).
+- **+9.3%** additional improvement from self-improvement memory across successive queries — no human feedback, no retraining (Cohen's *d* = 0.83).
+- **Zero hallucinated version numbers** across version-specific evaluation; every claim traces back to a retrieved source.
+- Runs **fully locally** on Apple Silicon (24 GB unified memory) via Ollama. No closed-model API calls.
 
-We deliberately chose a **Monolithic Layered Architecture** for Sprint 8 MVP to enable rapid development and validate core functionality. Event-driven refactoring is planned for Sprint 10-12 when scaling requirements increase.
+---
+
+## Why this exists
+
+Every time a software update ships — iOS, Linux, Firefox, a NAS firmware, whatever — the information you need is scattered. Release notes tell you the official version. CVE feeds tell you the security side. Reddit tells you what's actually breaking for real users. Ask a normal single-agent RAG system *"are there Siri issues after iOS 26.4?"* and you get a vague answer with no real evidence.
+
+AMARA is built around the observation that single-agent RAG systems do query rewriting, retrieval, and evaluation all in one reasoning pass — which causes vocabulary mismatch (users say *"iPhone,"* release notes say *"iOS"*) and offers no feedback loop when retrieval fails. We decompose those tasks into four specialized agents and add a persistent memory of what worked.
+
+---
+
+## Architecture
+
+Four specialized agents coordinated by an Orchestrator, connected through a retrieval-level feedback loop:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Hardware Layer (ESP32 + Sensors)                       │
-│  • VEML7700 Light Sensor (I²C)                          │
-│  • INA260 Power Monitor (I²C)                           │
-│  • Mini PIR Motion Sensor                               │
-│  • MOSFET IRL520 Switch                                 │
-└────────────────┬────────────────────────────────────────┘
-                 │ HTTPS/TLS 1.3
-┌────────────────▼────────────────────────────────────────┐
-│  Application Layer (Flask 3.0+ REST API)                │
-│  • 514 lines of Python code                             │
-│  • 15 REST API endpoints                                │
-│  • PyMongo 4.6+ database driver                         │
-│  • Werkzeug authentication                              │
-└────────────────┬────────────────────────────────────────┘
-                 │ Direct Synchronous Writes
-┌────────────────▼────────────────────────────────────────┐
-│  Database Layer (MongoDB Atlas 7.0+)                    │
-│  • 8 active collections                                 │
-│  • M0 Free Tier (512MB)                                 │
-│  • AWS us-west-2                                        │
-└─────────────────────────────────────────────────────────┘
+                  ┌──────────────────────┐
+                  │   User Question      │
+                  └──────────┬───────────┘
+                             ▼
+                  ┌──────────────────────┐
+                  │  Orchestrator Agent  │
+                  └──────────┬───────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        ▼                    ▼                    ▼
+┌───────────────┐   ┌────────────────┐   ┌─────────────────┐
+│ Query Rewriter│──▶│ Retriever      │──▶│ Evaluator       │
+│   (Llama 3.1) │   │ (vendor-aware) │   │ (score 0.0–1.0) │
+└───────────────┘   └────────────────┘   └─────────┬───────┘
+        ▲                                          │
+        │      retry if score < θ = 0.30           │
+        └──────────────────────────────────────────┘
+                             │
+                             ▼
+                  ┌──────────────────────┐
+                  │  Generated Answer    │
+                  │  (grounded + cited)  │
+                  └──────────────────────┘
 ```
 
-**Why Monolithic?**
-- ✅ Rapid development (1 sprint vs 3 sprints)
-- ✅ Simple to understand and debug
-- ✅ Team familiarity with REST APIs
-- ✅ Suitable for <50 devices
-- ✅ Production-ready MVP delivered
+| Agent | Responsibility |
+|---|---|
+| **Orchestrator** | Coordinates the pipeline; manages retrieval retries when the Evaluator flags low quality. |
+| **Query Rewriter** | Normalizes user terminology to match how vendors actually write release notes. Pulls from Self-Improvement Memory to bias future queries toward learned-successful terms. |
+| **Retriever** | Vendor-aware search across a registry of **14,223 vendors** and **628 software-related subreddits**. Restricts retrieval to vendor-specific sources when a vendor is detected. |
+| **Evaluator** | Deterministic 0.0–1.0 score combining retrieval volume, release-note matches, community matches, and CVE matches. Triggers a retry if score < 0.30. |
 
-**Future: Event-Driven Architecture** (Sprint 10-12)
-- Event Bus with Pub/Sub pattern
-- 4 Event Handlers (Database, Notification, Digital Twin, Observability)
-- Async processing for 100+ devices
+### Self-Improvement Memory
+
+Every query-expansion term that leads to a successful retrieval accumulates a positive score. Failed retrievals decrement scores. The Query Rewriter uses these scores to bias future queries. **No human feedback, no labeled data, no model retraining.**
+
+Top learned terms after 50 queries (interpretable on inspection): `vulnerability` (+2.20), `patch` (+1.58), `advisory` (+1.23), `update` (+1.15), `kernel` (+0.98). These are exactly the terms a domain expert would tell you matter — the system found them on its own from retrieval outcomes.
 
 ---
 
-## 🚀 Quick Start
+## Data sources
 
-### Prerequisites
+**Verified (Tier 1):**
+- Vendor registry — 6,578 entries
+- Software release notes — 31,958 entries
+- CVE / vulnerability advisories — 24,139 entries
+- Apple Developer RSS, CISA KEV, CIRCL CVE Atom feed (dedicated Apple-side coverage)
 
-- **Hardware:** ESP32 Thing Plus, VEML7700, INA260, PIR sensor
-- **Software:** Python 3.11+, MongoDB Atlas account, Git
-- **Optional:** Arduino IDE for ESP32 firmware
+**Community (Tier 2):**
+- Reddit discussions — 208,466 posts
+- Software update risk discussions — 2,637 posts
+- Vendor-specific subreddit queries
+- Google News
 
-### 1. Clone Repository
+Verified and community sources are kept separate and weighted differently in the Evaluator's score.
+
+---
+
+## Results
+
+### Retrieval quality by category (50 questions)
+
+| Category | Single-Agent | 4-Agent | Improvement |
+|---|---:|---:|---:|
+| Security | 0.630 | 0.750 | **+19.0%** |
+| Bugs | 0.756 | 0.833 | +10.3% |
+| Releases | 0.667 | 0.723 | +8.5% |
+| Community | 0.730 | 0.850 | +16.4% |
+| General | 0.600 | 0.750 | **+25.0%** |
+| **Overall** | **0.680** | **0.798** | **+17.2%** |
+
+*Paired t-test: t(49) = 2.32, p = 0.020.*
+
+### Self-improvement over the evaluation run
+
+| Tertile | Mean retrieval quality |
+|---|---:|
+| Q1–Q17 (early) | 0.756 |
+| Q34–Q50 (late) | 0.826 |
+
+*+9.3% improvement, t(16) = 2.18, p = 0.043, Cohen's d = 0.83.*
+
+### Answer accuracy
+
+On version-specific questions, AMARA correctly identified Linux v7.0.0 (April 13, 2026) and Firefox v149.0.1 (April 7, 2026) from the corresponding release sources. On a supplementary 10-question live evaluation: **4 fully correct, 6 partially correct, 0 unsupported version numbers or CVE identifiers generated.**
+
+---
+
+## Tech stack
+
+- **Models:** Llama 3.1 8B (primary), Mistral 7B (tested) — local via [Ollama](https://ollama.com), temperature 0
+- **Frameworks:** LangChain, smolagents, CrewAI
+- **Embeddings & search:** HuggingFace BGE-Large, FAISS, ChromaDB
+- **Adaptation:** RLAIF-style retrieval-level feedback, persistent term-weight memory
+- **Hardware tested:** Apple Silicon, 24 GB unified memory, Metal GPU acceleration
+
+Three implementations are provided (Pure Python, LangChain, smolagents) — they produce equivalent retrieval results on the evaluation dataset. The Pure Python implementation gives the cleanest execution trace.
+
+---
+
+## Getting started
+
+### Requirements
+
+- Python 3.11
+- [Ollama](https://ollama.com/download) with `llama3.1:8b` pulled
+- ~16 GB RAM minimum (24 GB recommended for comfortable inference)
+- macOS/Linux (Apple Silicon recommended for Metal acceleration)
+
+### Setup
 
 ```bash
-git clone https://github.com/SE4CPS/IoT-Light-Sensor.git
-cd IoT-Light-Sensor
-```
+# Clone
+git clone https://github.com/Shradhapujari/AMARA-An-Adaptive-Multi-Agent-RAG-Architecture-for-Software-Ecosystem-Update-Monitoring.git
+cd AMARA-An-Adaptive-Multi-Agent-RAG-Architecture-for-Software-Ecosystem-Update-Monitoring
 
-### 2. Backend Setup
+# Virtual environment
+python3.11 -m venv venv311
+source venv311/bin/activate
 
-```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+# Dependencies (pinned for reproducibility)
 pip install -r requirements.txt
 
-# Configure environment variables
-cp .env.example .env
-# Edit .env with your MongoDB URI and secret key
-
-# Run Flask application
-cd dashboard
-python app.py
+# Pull the model
+ollama pull llama3.1:8b
 ```
 
-Server runs at: `http://localhost:5000`
-
-### 3. ESP32 Firmware Setup
+### Run a query
 
 ```bash
-# Open Arduino IDE
-# Install ESP32 board support
-# Install libraries: VEML7700, INA260, WiFi
-
-# Open firmware/light_sensor.ino
-# Update WiFi credentials and API endpoint
-# Upload to ESP32
+python multiagent_rag_v3.py --question "Are there known Siri issues after iOS 26.4?"
 ```
 
-### 4. Access Dashboard
-
-Open browser: `http://localhost:5000`
-
----
-
-## 📚 API Documentation
-
-### Base URLs
-
-- **Production:** `https://iot-light-sensor.onrender.com`
-- **Local:** `http://localhost:5000`
-- **Swagger Docs:** `/api/docs`
-
-### Quick Reference
-
-#### Health Check
-```bash
-curl https://iot-light-sensor.onrender.com/health
-```
-
-#### Submit Sensor Data
-```bash
-curl -X POST https://iot-light-sensor.onrender.com/api/sensor/data \
-  -H "Content-Type: application/json" \
-  -d '{
-    "room_id": "room-101",
-    "light_state": "ON",
-    "lux": 450.0,
-    "timestamp": "2026-03-26T10:00:00Z",
-    "battery_pct": 87,
-    "power_mw": 2400
-  }'
-```
-
-#### Get Room Usage
-```bash
-curl https://iot-light-sensor.onrender.com/api/room/living/2026-03-26
-```
-
-### Complete API Endpoints
-
-<details>
-<summary><strong>Sensor Data Endpoints (4)</strong></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/sensor/data` | Submit ESP32 sensor readings |
-| GET | `/api/readings` | Get latest readings (paginated) |
-| GET | `/api/stats` | Get sensor statistics |
-| GET | `/health` | Health check (no DB query) |
-
-</details>
-
-<details>
-<summary><strong>Usage Statistics Endpoints (4)</strong></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/usage/save` | Save daily usage data |
-| GET | `/api/usage/{date}` | Get usage for specific date |
-| GET | `/api/usage/statistics` | Get weekly/monthly stats |
-| POST | `/api/usage/reset` | Clear all usage data (admin) |
-
-</details>
-
-<details>
-<summary><strong>Room Management Endpoints (5)</strong></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/room/{room}/save` | Save room-specific usage |
-| GET | `/api/room/{room}/{date}` | Get room data for date |
-| GET | `/api/room/{room}/statistics` | Get room weekly/monthly stats |
-| GET | `/api/rooms/all/{date}` | Get all rooms for date |
-| POST | `/api/rooms/reset` | Clear all room data (admin) |
-
-**Valid rooms:** living, bedroom, kitchen, bathroom, office, garage
-
-</details>
-
-<details>
-<summary><strong>User Management Endpoints (2)</strong></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/user/register` | Register new user account |
-| POST | `/api/user/login` | Authenticate and login |
-
-</details>
-
-<details>
-<summary><strong>Admin Operations (1)</strong></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/admin/access` | Grant/revoke admin access |
-
-</details>
-
-### Interactive API Documentation
-
-Visit our **[Swagger UI Documentation](https://iot-light-sensor.onrender.com/api/docs)** for:
-- Interactive endpoint testing
-- Request/response schemas
-- Example payloads
-- Authentication flows
-
----
-
-## 🗄️ Database Schema
-
-### MongoDB Collections
-
-| Collection | Purpose | Fields |
-|------------|---------|--------|
-| `room_living` | Living room usage | date, onSeconds, avgLux, updatedAt |
-| `room_bedroom` | Bedroom usage | date, onSeconds, avgLux, updatedAt |
-| `room_kitchen` | Kitchen usage | date, onSeconds, avgLux, updatedAt |
-| `room_bathroom` | Bathroom usage | date, onSeconds, avgLux, updatedAt |
-| `room_office` | Office usage | date, onSeconds, avgLux, updatedAt |
-| `room_garage` | Garage usage | date, onSeconds, avgLux, updatedAt |
-| `daily_usage` | Aggregated daily stats | date, onSeconds, offSeconds, updatedAt |
-| `users` | User credentials | email, password_hash, created_at |
-
----
-
-## 🛠️ Technology Stack
-
-### Hardware
-- **ESP32 Thing Plus** - SparkFun microcontroller with WiFi
-- **VEML7700** - Ambient light sensor (0-120k lux, I²C)
-- **INA260** - Power monitor (voltage, current, power via I²C)
-- **Mini PIR** - Motion sensor (passive infrared detection)
-- **MOSFET IRL520** - Logic-level switch (10A max)
-- **12V DC Lights** - 4x flood lights (600mA each)
-
-**Cost per room:** $59
-
-### Backend
-- **Flask 3.0+** - Python web framework
-- **PyMongo 4.6+** - MongoDB driver
-- **Werkzeug** - Password hashing (PBKDF2)
-- **Gunicorn 21.2.0** - Production WSGI server
-- **Python 3.11+** - Runtime environment
-
-### Database
-- **MongoDB Atlas 7.0+** - Cloud database
-- **M0 Free Tier** - 512MB storage
-- **AWS us-west-2** - Hosted region
-- **3-node replica set** - High availability
-
-### Frontend
-- **HTML5** - Semantic markup, Jinja2 templates
-- **Chart.js 4.4+** - Data visualization
-- **JavaScript ES6+** - Vanilla JS, Fetch API
-- **CSS3** - Flexbox/Grid, responsive design
-
-### DevOps
-- **Render.com** - Hosting platform (free tier)
-- **GitHub Actions** - CI/CD pipeline
-- **Docker** - Containerization (optional)
-- **Swagger/OpenAPI 3.0** - API documentation
-
-**Total Cost:** $0/month (all free tiers)
-
----
-
-## 📊 System Metrics
-
-| Metric | Value |
-|--------|-------|
-| Lines of Code | 514 (Flask app.py) |
-| API Endpoints | 15 documented |
-| Database Collections | 8 active |
-| Test Cases | 23+ CURL commands |
-| Supported Rooms | 6 (living, bedroom, etc.) |
-| Response Time | ~150ms average |
-| Cost | $0/month |
-
----
-
-## 🧪 Testing
-
-### Run Test Suite
+### Reproduce the evaluation
 
 ```bash
-# CURL tests
-bash tests/test_api.sh
-
-# Python tests
-python tests/test_api.py
-
-# Health check
-curl http://localhost:5000/health
+python run_evaluation.py --questions data/eval_50q.json --output results/
 ```
 
-### Example Test Cases
+> ⚠️ The system relies on live software ecosystem APIs. Results may shift over time as upstream data changes. For controlled comparison, snapshot the API responses (see `Reproducibility Notes` in the paper, §5.3).
 
-```bash
-# Test sensor data submission
-curl -X POST http://localhost:5000/api/sensor/data \
-  -H "Content-Type: application/json" \
-  -d '{"room_id":"room-101","light_state":"ON","lux":450}'
+---
 
-# Test room statistics
-curl http://localhost:5000/api/room/living/statistics?period=weekly
+## Repository layout
 
-# Test usage data
-curl http://localhost:5000/api/usage/2026-03-26
 ```
-
-### Load Testing
-
-```bash
-# Install Apache Bench
-sudo apt-get install apache2-utils
-
-# Test 1000 requests with 10 concurrent connections
-ab -n 1000 -c 10 http://localhost:5000/health
+.
+├── multiagent_rag_v3.py          # Main four-agent system
+├── unified_agent_system.py       # Single-agent baseline (for ablation)
+├── agents/
+│   ├── orchestrator.py
+│   ├── query_rewriter.py
+│   ├── retriever.py
+│   └── evaluator.py
+├── memory/
+│   └── self_improvement.py       # Persistent term-weight memory
+├── data/
+│   ├── eval_50q.json             # Evaluation questions
+│   └── vendor_registry.json      # 14,223 vendor entries
+├── results/
+│   └── AMARA_DrBerhe_Table.xlsx  # Per-question results table
+├── paper/
+│   ├── AMARA_MobiSPC2026_FINAL.tex
+│   └── figure1_architecture.tex
+└── requirements.txt
 ```
 
 ---
 
-## 📦 Deployment
+## Known limitations
 
-### Deploy to Render.com
+We're explicit about these in the paper (§5) — they're real, and good directions to push on:
 
-1. **Push to GitHub:**
-```bash
-git push origin main
+- **Apple is structurally harder.** Apple doesn't publish to the same release database other vendors do. We added dedicated Apple sources (Developer RSS, CISA KEV, CIRCL CVE) and iOS/Apple synonym expansion, but full coverage requires broader vendor onboarding.
+- **Temporal queries.** *"What was the Linux version on January 1st 2026?"* — the date constraint isn't currently passed to retrieval, so we return the latest version. Fixable.
+- **Vendor extraction failures** on phrases like *"Synology NAS unreachable after upgrade"* — preprocessing strips domain terms. Future fix: embedding-based vendor matching over the full registry.
+- **Community-source reliability.** Reddit is the weakest link. We require ≥10 comments, ≥3 author replies, quality ≥ 0.3, and separate verified from community sources — but a single popular wrong post can still bias an answer.
+- **Evaluation size.** 50 questions is statistically significant but small. A 500-question multi-ecosystem benchmark is the next study.
+- **Heuristic thresholds** (θ = 0.30 for retry, the Evaluator scoring weights) were manually tuned. Learned reward models and adaptive threshold selection are in the roadmap.
+
+---
+
+## Roadmap
+
+- [ ] 500-question multi-ecosystem benchmark
+- [ ] Embedding-based vendor matching (replace static alias dictionary)
+- [ ] Learned reward model for the Evaluator (replace heuristic scoring)
+- [ ] Adaptive threshold selection
+- [ ] Head-to-head comparison with Self-RAG, CRAG, MA-RAG, MAIN-RAG (requires porting them to the software-ecosystem retrieval setting)
+- [ ] Cross-post agreement analysis for community-source credibility
+- [ ] Multilingual evaluation
+- [ ] Decay / capping for the Self-Improvement Memory to prevent drift at scale
+
+---
+
+## Citing AMARA
+
+If you build on this work, please cite:
+
+```bibtex
+@inproceedings{pujari2026amara,
+  title     = {An Adaptive Multi-Agent RAG Architecture for Software Ecosystem Update Monitoring},
+  author    = {Pujari, Shradha Devendra and Berhe, Solomon},
+  booktitle = {Proceedings of the Workshop on Agentic Software Engineering (AgenticSE '26)},
+  year      = {2026},
+  address   = {San Jose, CA, USA},
+  publisher = {ACM}
+}
 ```
 
-2. **Render Auto-Deploy:**
-   - Render.com detects push to main branch
-   - Builds Docker container
-   - Runs health checks
-   - Switches traffic (blue-green deployment)
+---
 
-3. **Environment Variables:**
-   - Set in Render.com dashboard
-   - `MONGO_URI`, `DB_NAME`, `SECRET_KEY`
+## Collaborate
 
-4. **Access Production:**
-   - URL: `https://iot-light-sensor.onrender.com`
-   - Health: `https://iot-light-sensor.onrender.com/health`
-   - Swagger: `https://iot-light-sensor.onrender.com/api/docs`
+I'm actively looking for collaborators on:
 
-### Manual Deployment
+- Larger-scale evaluation across multiple software ecosystems
+- Learned reward models / adaptive thresholds to replace the current heuristics
+- Community-source credibility estimation
+- Multilingual extensions
+- Head-to-head benchmarks against other multi-agent RAG systems
 
-```bash
-# Build Docker image
-docker build -t iot-light-sensor .
+If anything here connects to what you're working on — or you'd like to contribute — open an issue or reach out directly. I'd love to chat at AgenticSE '26 or after.
 
-# Run container
-docker run -p 5000:5000 \
-  -e MONGO_URI="your_uri" \
-  -e DB_NAME="light_sensor_db" \
-  iot-light-sensor
-```
+**Contact:** Shradha Devendra Pujari — `s_pujari@u.pacific.edu` · [GitHub @Shradhapujari](https://github.com/Shradhapujari)
+
+**Advisor:** Dr. Solomon Berhe — `sberhe@pacific.edu`
 
 ---
 
-## 🔒 Security
+## Acknowledgments
 
-### Current Measures
-- ✅ TLS 1.3 encryption for all API calls
-- ✅ Werkzeug PBKDF2 password hashing
-- ✅ MongoDB authentication with TLS/SSL
-- ✅ Environment variables for secrets
-- ✅ HTTPS enforced in production
-
-### Recommended Enhancements
-- 🔲 JWT authentication for API endpoints
-- 🔲 Rate limiting (Flask-Limiter)
-- 🔲 API key rotation policy
-- 🔲 Input validation and sanitization
-- 🔲 MongoDB IP whitelist
-- 🔲 Audit logging for sensitive operations
+Thanks to the maintainers of public software ecosystem data sources, online communities, and open APIs for making software-related information accessible for research. Their continued contributions enable the collection and evaluation of real-world software update questions that made this study possible.
 
 ---
 
-## 🗺️ Roadmap
+## License
 
-### Sprint 9 (Immediate)
-- [ ] Deploy to Render.com production
-- [ ] Implement 12-hour notification system
-- [ ] Complete ESP32 firmware integration
-- [ ] Integrate Swagger UI into Flask app
-- [ ] Load testing with 10-20 devices
-
-### Sprint 10-11 (Short Term)
-- [ ] Real-time WebSocket dashboard updates
-- [ ] Email/SMS notification delivery
-- [ ] User preferences and custom alerts
-- [ ] Mobile app (React Native)
-- [ ] Advanced data visualization
-
-### Sprint 12+ (Medium Term)
-- [ ] Event-Driven Architecture refactoring
-- [ ] Event Bus (Python Queue → RabbitMQ/Kafka)
-- [ ] 4 Event Handlers (Database, Notification, Twin, Observability)
-- [ ] Digital twin anomaly detection
-- [ ] Machine learning usage predictions
-- [ ] Scale to 100+ devices
-
----
-
-## 📖 Documentation
-
-### Available Documentation
-
-- **[Swagger/OpenAPI Spec](https://iot-light-sensor.onrender.com/api/docs)** - Interactive API documentation
-- **[Architecture Documentation](docs/architecture.md)** - Complete system architecture
-- **[Database Schema](docs/database_schema.md)** - MongoDB collection schemas
-- **[Testing Guide](docs/testing.md)** - CURL commands and test scripts
-- **[Deployment Guide](docs/deployment.md)** - Production deployment steps
-- **[Hardware Setup](docs/hardware.md)** - ESP32 wiring and configuration
-
-### UML Diagrams
-
-- [Component Architecture](docs/diagrams/component.puml)
-- [Sequence Flow](docs/diagrams/sequence.puml)
-- [Deployment Diagram](docs/diagrams/deployment.puml)
-- [Database Schema](docs/diagrams/database.puml)
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please follow these steps:
-
-1. **Fork the repository**
-2. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
-3. **Commit your changes** (`git commit -m 'Add amazing feature'`)
-4. **Push to branch** (`git push origin feature/amazing-feature`)
-5. **Open a Pull Request**
-
-### Contribution Guidelines
-
-- Follow Python PEP 8 style guide
-- Add tests for new features
-- Update documentation
-- Ensure all tests pass
-- Write clear commit messages
-
----
-
-## 🐛 Known Issues
-
-### Current Limitations
-
-- ⚠️ **12-hour notification system not implemented** - Core requirement pending
-- ⚠️ **No real hardware testing** - ESP32 firmware needs integration testing
-- ⚠️ **Synchronous blocking operations** - Scales poorly beyond 50 devices
-- ⚠️ **No JWT authentication** - Basic auth only (Werkzeug hashing)
-- ⚠️ **Network latency bottleneck** - 67% of response time (100ms)
-
-### Planned Fixes
-
-See [Roadmap](#-roadmap) for scheduled improvements.
-
----
-
-## 📜 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 👥 Team
-
-**SE4CPS Team** - Software Engineering for Cyber-Physical Systems
-
-- Architecture Design
-- Backend Development
-- Frontend Development
-- Hardware Integration
-- Documentation
-
----
-
-## 📞 Contact & Support
-
-- **GitHub Issues:** [Report bugs or request features](https://github.com/SE4CPS/IoT-Light-Sensor/issues)
-- **GitHub Discussions:** [Ask questions or share ideas](https://github.com/SE4CPS/IoT-Light-Sensor/discussions)
-- **Email:** Contact team via GitHub
-
----
-
-## 🙏 Acknowledgments
-
-- **SparkFun** - ESP32 Thing Plus hardware
-- **MongoDB** - Atlas cloud database platform
-- **Render.com** - Free tier hosting
-- **Chart.js** - Data visualization library
-- **Flask** - Python web framework
-
----
-
-## 📈 Project Status
-
-![GitHub last commit](https://img.shields.io/github/last-commit/SE4CPS/IoT-Light-Sensor)
-![GitHub issues](https://img.shields.io/github/issues/SE4CPS/IoT-Light-Sensor)
-![GitHub pull requests](https://img.shields.io/github/issues-pr/SE4CPS/IoT-Light-Sensor)
-
-**Current Sprint:** Sprint 8 Complete ✅  
-**Next Milestone:** Production Deployment (Sprint 9)  
-**Architecture:** Monolithic Layered REST API  
-**Status:** Production Ready MVP
-
----
-
-<p align="center">
-  <strong>Built with ❤️ for Indoor Lighting Intelligence</strong>
-</p>
-
-<p align="center">
-  <sub>Design for ideal, build for practical. 🚀</sub>
-</p>
+TBD — license will be added once the paper review process concludes. In the meantime, please reach out if you'd like to use or extend this work.
