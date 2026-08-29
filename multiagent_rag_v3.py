@@ -116,20 +116,49 @@ def fetch_llm_releases(query, limit=4, min_overlap=1):
     Mirrors fetch_live_releases but restricts the candidate set to LLM
     entries. min_overlap defaults to 1 because model questions are often
     short ("latest llama version") and rarely produce two term overlaps.
+
+    NOTE: unlike fetch_live_releases, this does NOT GET the bare LLM_API
+    feed. Confirmed against the live API: that feed only ever returns the
+    most recent ~1000 OS/browser releases and never surfaces LLM rows.
+    LLM/AI-model records live behind the search endpoint instead
+    (LLM_API + "search?q=<term>"), so we query it once per expanded term
+    and merge the results.
     """
     try:
         import requests as req
-        r = req.get(LLM_API, timeout=30)
-        raw = r.json() if r.status_code == 200 else {}
-        all_v = []
-        if isinstance(raw, dict):
-            for key, val in raw.items():
-                if isinstance(val, list):
-                    all_v.extend(val)
-        elif isinstance(raw, list):
-            all_v = raw
-
         exp = expand_terms(query)
+        # Use the literal query words (in order) to search -- expand_terms()
+        # returns an unordered set of synonyms, and capping that arbitrarily
+        # can drop the one term that actually matters (e.g. "llama") in
+        # favor of generic synonyms like "release"/"update". expand_terms()
+        # is still used below for relevance scoring.
+        raw_terms = list(dict.fromkeys((query or "").lower().split()))
+        search_terms = [t for t in raw_terms if len(t) > 2] or raw_terms
+        if not search_terms:
+            search_terms = [(query or "").strip()]
+        search_terms = [t for t in search_terms[:8] if t]
+
+        all_v = []
+        seen_ids = set()
+        for term in search_terms:
+            try:
+                r = req.get(f"{LLM_API}search", params={"q": term}, timeout=15)
+            except Exception:
+                continue
+            raw = r.json() if r.status_code == 200 else {}
+            if not isinstance(raw, dict):
+                continue
+            for key, val in raw.items():
+                if not isinstance(val, list):
+                    continue
+                for v in val:
+                    vid = v.get("_id")
+                    if vid and vid in seen_ids:
+                        continue
+                    if vid:
+                        seen_ids.add(vid)
+                    all_v.append(v)
+
         scored = []
         for v in all_v:
             if not _is_llm_release(v):
