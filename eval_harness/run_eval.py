@@ -28,6 +28,7 @@ from typing import Dict, List
 
 from .config import EvalConfig
 from .dataset import load_dataset, dataset_hash
+from . import benchmarks as bench_mod
 from .generators import build_generators
 from .judge import Judge
 from .metrics import retrieval_metrics, mean_ci
@@ -56,7 +57,13 @@ def run(cfg: EvalConfig) -> str:
     random.seed(cfg.seed)
     os.makedirs(cfg.results_dir, exist_ok=True)
 
-    records = load_dataset(cfg.dataset, cfg.limit)
+    if cfg.benchmark:
+        records = bench_mod.load_benchmark(cfg.dataset, fmt=cfg.benchmark,
+                                           limit=cfg.limit)
+        print(f"[harness] benchmark mode: {cfg.benchmark} "
+              f"({len(records)} questions with ground truth)")
+    else:
+        records = load_dataset(cfg.dataset, cfg.limit)
     ds_hash = dataset_hash(records)
     run_id = "run_" + str(int(time.time())) + "_" + ds_hash
     run_dir = os.path.join(cfg.results_dir, run_id)
@@ -121,7 +128,12 @@ def run(cfg: EvalConfig) -> str:
                 contexts = [f"{d['title']}: {d['text']}" for d in out["docs"]]
                 ans = judge.score_answer(query, out["answer"], contexts,
                                          rec.get("ground_truth"))
+            bench_label = None
+            if cfg.benchmark and rec.get("ground_truth"):
+                bench_label = bench_mod.score_prediction(out["answer"],
+                                                         rec["ground_truth"])
             per_query.append({
+                "benchmark_label": bench_label,
                 "query_id": rec["id"],
                 "query": query,
                 "category": rec["category"],
@@ -148,6 +160,18 @@ def run(cfg: EvalConfig) -> str:
     cfg_dict["n_questions"] = len(records)
     json.dump(cfg_dict, open(os.path.join(run_dir, "config.json"), "w"), indent=2)
 
+    if cfg.benchmark:
+        by_id = {r["id"]: r for r in records}
+        bench_summary = bench_mod.score_run(per_query, by_id)
+        json.dump(bench_summary,
+                  open(os.path.join(run_dir, "benchmark_scores.json"), "w"), indent=2)
+        print("\n[harness] benchmark scores "
+              "(accuracy / hallucination / missing / CRAG score):")
+        for name, s in sorted(bench_summary.items(),
+                              key=lambda kv: -kv[1]["crag_score"]):
+            print(f"    {name:28s} {s['accuracy']:.3f}  {s['hallucination']:.3f}  "
+                  f"{s['missing']:.3f}  {s['crag_score']:+.3f}   (n={s['n']})")
+
     agg = report_mod.aggregate(per_query, cfg.ks)
     report_mod.write_csv(agg, os.path.join(run_dir, "aggregate.csv"))
     report_mod.write_markdown(agg, cfg_dict, os.path.join(run_dir, "report.md"))
@@ -168,6 +192,10 @@ def _parse_args() -> EvalConfig:
     p.add_argument("--generators", default=",".join(cfg.generators),
                    help="comma-separated generator specs")
     p.add_argument("--judge", default=cfg.judge)
+    p.add_argument("--benchmark", default=cfg.benchmark,
+                   choices=["", "crag", "generic"],
+                   help="score against an established benchmark file "
+                        "(deterministic correct/incorrect/missing labelling)")
     p.add_argument("--top-k", type=int, default=cfg.top_k)
     p.add_argument("--seed", type=int, default=cfg.seed)
     a = p.parse_args()
@@ -175,6 +203,7 @@ def _parse_args() -> EvalConfig:
     cfg.limit = a.limit
     cfg.generators = [s.strip() for s in a.generators.split(",") if s.strip()]
     cfg.judge = a.judge
+    cfg.benchmark = a.benchmark
     cfg.top_k = a.top_k
     cfg.seed = a.seed
     return cfg

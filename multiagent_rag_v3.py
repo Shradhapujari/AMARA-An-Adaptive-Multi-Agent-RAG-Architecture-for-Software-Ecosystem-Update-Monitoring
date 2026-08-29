@@ -18,6 +18,25 @@ DATA_PATH = Path(__file__).parent / "data" / "enhanced_automated_sentiment_resul
 RELEASES_API = "https://releasetrain.io/api/v/"
 REDDIT_API   = "https://releasetrain.io/api/reddit/query/positive"
 CVE_API      = "https://releasetrain.io/api/reddit/query/cve"
+# LLM / AI model releases. Served by the same /api/v/ collection; entries are
+# distinguished by versionProductType (and by product name for providers whose
+# type field is not set). See LLM_PRODUCT_TYPES / LLM_PRODUCT_NAMES below.
+LLM_API      = "https://releasetrain.io/api/v/"
+
+# Product types that identify an LLM release in the versions collection.
+LLM_PRODUCT_TYPES = {"llm", "ai", "ai_model", "aimodel", "model", "genai"}
+
+# Fallback identification by product name, for entries whose versionProductType
+# is missing or generic. Lowercase substring match against versionProductName.
+LLM_PRODUCT_NAMES = {
+    "gpt", "chatgpt", "o1", "o3", "codex",
+    "claude", "sonnet", "opus", "haiku",
+    "gemini", "gemma", "palm",
+    "llama", "codellama",
+    "mistral", "mixtral", "codestral",
+    "deepseek", "qwen", "phi", "grok", "command-r", "falcon",
+    "ollama", "vllm", "llama.cpp", "lmstudio",
+}
 
 SYNONYMS = {
     "linux":["linux","ubuntu","debian","kernel","fedora","redhat"],
@@ -77,6 +96,68 @@ def fetch_live_releases(query, limit=5, min_overlap=2):
         return [d for _,d in scored[:limit]]
     except Exception as e:
         return []
+
+def _is_llm_release(v):
+    """True if a /api/v/ entry describes an LLM / AI model release."""
+    ptype = (v.get("versionProductType") or "").strip().lower()
+    if ptype in LLM_PRODUCT_TYPES:
+        return True
+    name = (v.get("versionProductName") or "").lower()
+    if any(n in name for n in LLM_PRODUCT_NAMES):
+        return True
+    tags = [str(x).lower() for x in (v.get("versionReleaseTags") or [])]
+    tags += [str(x).lower() for x in (v.get("versionSearchTags") or [])]
+    return any(tag in LLM_PRODUCT_TYPES for tag in tags)
+
+
+def fetch_llm_releases(query, limit=4, min_overlap=1):
+    """Retrieve LLM / AI model releases from the lake.
+
+    Mirrors fetch_live_releases but restricts the candidate set to LLM
+    entries. min_overlap defaults to 1 because model questions are often
+    short ("latest llama version") and rarely produce two term overlaps.
+    """
+    try:
+        import requests as req
+        r = req.get(LLM_API, timeout=30)
+        raw = r.json() if r.status_code == 200 else {}
+        all_v = []
+        if isinstance(raw, dict):
+            for key, val in raw.items():
+                if isinstance(val, list):
+                    all_v.extend(val)
+        elif isinstance(raw, list):
+            all_v = raw
+
+        exp = expand_terms(query)
+        scored = []
+        for v in all_v:
+            if not _is_llm_release(v):
+                continue
+            txt = (" ".join(str(x) for x in v.get("versionSearchTags", [])) + " " +
+                   str(v.get("versionProductName", "")) + " " +
+                   str(v.get("versionProductBrand", "")) + " " +
+                   str(v.get("versionReleaseNotes", ""))).lower()
+            overlap = sum(1 for t in exp if t in txt)
+            if overlap >= min_overlap:
+                scored.append((overlap, {
+                    "title": f"{v.get('versionProductBrand','')} {v.get('versionProductName')} "
+                             f"v{v.get('versionNumber')} — {str(v.get('versionReleaseNotes',''))[:80]}".strip(),
+                    "subreddit": v.get("versionReleaseChannel", "release"),
+                    "sentiment": "Negative" if "SECURITY" in v.get("classification", {}).get("securityType", []) else "Positive",
+                    "score": overlap,
+                    "divergence": 0.0,
+                    "source": "llm_releases",
+                    "url": v.get("versionUrl", "") or v.get("versionReleaseNotes", ""),
+                    "date": v.get("versionReleaseDate", ""),
+                    "verified": True,
+                    "tier": 1,
+                }))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [d for _, d in scored[:limit]]
+    except Exception:
+        return []
+
 
 def fetch_live_reddit(query, limit=5):
     try:
@@ -464,6 +545,7 @@ def get_source_label(source):
         "nvd":             ("✅ VERIFIED", "NVD/NIST Official CVE Database"),
         "releases":        ("✅ VERIFIED", "releasetrain.io Release Notes (general)"),
         "cve":             ("✅ VERIFIED", "releasetrain.io CVE Advisories"),
+        "llm_releases":    ("✅ VERIFIED", "releasetrain.io — LLM / AI Model Releases"),
         "vendor_reddit":   ("🟡 COMMUNITY", "Reddit — Vendor Subreddit (targeted)"),
         "reddit_live":     ("🟡 COMMUNITY", "Reddit Community Posts (releasetrain.io)"),
         "reddit_search":   ("🟡 COMMUNITY", "Reddit Community Posts (direct search)"),
@@ -527,6 +609,15 @@ VENDOR_ALIASES = {
     "truenas": "truenas", "aws": "aws", "spotify": "spotify",
     "tinder": "tinder", "otbr": "homeassistant",
     "neovim": "neovim", "nvim": "neovim",
+    # LLM / AI models
+    "gpt": "gpt", "chatgpt": "gpt", "openai": "gpt", "gpt-4": "gpt", "gpt-5": "gpt",
+    "claude": "claude", "anthropic": "claude", "sonnet": "claude",
+    "opus": "claude", "haiku": "claude",
+    "gemini": "gemini", "bard": "gemini", "gemma": "gemma",
+    "llama": "llama", "llama3": "llama", "llama 3": "llama", "codellama": "llama",
+    "mistral": "mistral", "mixtral": "mistral", "codestral": "mistral",
+    "deepseek": "deepseek", "qwen": "qwen", "grok": "grok", "xai": "grok",
+    "phi": "phi", "ollama": "ollama", "vllm": "vllm",
     "microsoftedge": "MicrosoftEdge",
 }
 
@@ -1098,6 +1189,14 @@ class RetrieverAgent:
             VENDOR_SUBREDDITS = {
                 "linux":     ["linux","linuxquestions","Fedora","Ubuntu","debian"],
                 "ollama":    ["ollama","LocalLLaMA","openclaw"],
+                "llama":     ["LocalLLaMA","ollama","MachineLearning"],
+                "gpt":       ["OpenAI","ChatGPT","LocalLLaMA"],
+                "claude":    ["ClaudeAI","Anthropic","LocalLLaMA"],
+                "gemini":    ["Bard","GoogleGeminiAI","LocalLLaMA"],
+                "mistral":   ["LocalLLaMA","MistralAI"],
+                "deepseek":  ["LocalLLaMA","DeepSeek"],
+                "qwen":      ["LocalLLaMA"],
+                "grok":      ["grok","LocalLLaMA"],
                 "comfyui":   ["comfyui"],
                 "openclaw":  ["openclaw"],
                 "Ubiquiti":  ["Ubiquiti"],
@@ -1132,6 +1231,9 @@ class RetrieverAgent:
         print(f"  Fetching : releasetrain.io/api/reddit/query/cve ...")
         cve = fetch_live_cve(rewritten_query, limit=2)
 
+        print(f"  Fetching : releasetrain.io/api/v/ (LLM / AI model releases) ...")
+        llm = fetch_llm_releases(rewritten_query, limit=3)
+
         print(f"  Fetching : releasetrain.io/api/reddit/query/positive ...")
         reddit = fetch_live_reddit(rewritten_query, limit=3) if not vendor_reddit else []
 
@@ -1139,7 +1241,7 @@ class RetrieverAgent:
         news = fetch_google_news(rewritten_query, limit=2)
 
         # ── Tier 1: vendor-specific first, then general verified ──
-        tier1 = vendor_releases + releases + apple + cisa + circl + cve
+        tier1 = vendor_releases + releases + apple + cisa + circl + cve + llm
         # ── Tier 2: vendor reddit first, then general community ──
         tier2 = vendor_reddit + reddit + news
 

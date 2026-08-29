@@ -25,6 +25,11 @@ class EvalConfig:
     # Dataset file (relative to project root) and how many questions to use.
     dataset: str = "validation_gt.json"
     limit: int = 0                      # 0 = all
+    # Established-benchmark mode. When set ("crag" or "generic"), the dataset is
+    # loaded via benchmarks.load_benchmark and answers are additionally scored
+    # with deterministic CRAG-style labelling (correct/incorrect/missing),
+    # independent of our own Evaluator and of the LLM judge.
+    benchmark: str = ""
     # Retrieval / metric settings.
     top_k: int = 4
     ks: List[int] = field(default_factory=lambda: [1, 3, 5])
