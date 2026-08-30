@@ -17,6 +17,22 @@ Systems:
   - RawLLMGenerator       : no retrieval, ask a model directly (GPT/Claude/Llama/...)
                             -> this is the "compare against other models" column
 
+Answer-metric fairness
+----------------------
+The multi-agent pipeline's own answer is a *template* assembled by
+`EvaluatorAgent` (headers, bullet lists, source tags); the single-agent
+baseline's answer is LLM prose. Scoring those two against each other with an
+LLM judge measures answer *format* as much as answer *content*, so a
+head-to-head on faithfulness/correctness between `marag` and `single_agent`
+is confounded by construction.
+
+The `marag_llm` arm removes that confound: same multi-agent retrieval, but the
+answer is synthesised from the retrieved docs through `build_synthesis_prompt`
+with the same model as the baseline. Then the only difference left between the
+two arms is the retrieval pipeline, which is the claim under test. `marag`
+stays available because it is the system the paper describes; `marag_llm`
+keeps its template answer under `template_answer` so nothing is lost.
+
 The Multi-Agent RAG System pipeline (`multiagent_rag_v3.py`) is a noisy CLI script; we import it
 and silence stdout + the artificial `pause()`/`bar()` sleeps so it runs fast and
 clean in batch.
@@ -77,6 +93,34 @@ def _silenced(mod):
             mod.bar = saved_bar
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Symmetric answer synthesis
+# ─────────────────────────────────────────────────────────────────────────
+# Every arm that turns retrieved docs into prose goes through the function
+# below, so a difference in answer scores between two arms cannot be an
+# artefact of a different prompt. The model is the caller's choice; pass the
+# same one to both arms to keep that comparison clean too.
+
+SYNTHESIS_INSTRUCTION = (
+    "You are a software-update assistant. Answer the question using ONLY the "
+    "sources below. Be concise (2-3 sentences). If the sources do not contain "
+    "the answer, say so."
+)
+
+
+def build_synthesis_prompt(query: str, docs: List[dict], top_k: int) -> str:
+    """The one synthesis prompt, shared by every doc-grounded arm."""
+    ctx = "\n".join(
+        f"- [{d.get('source','?')}] {d.get('title','')}: "
+        f"{(d.get('detail') or d.get('text') or '')[:200]}"
+        for d in docs[:top_k]
+    ) or "No documents retrieved."
+    return (
+        f"{SYNTHESIS_INSTRUCTION}\n\n"
+        f"Question: {query}\n\nSources:\n{ctx}\n\nAnswer:"
+    )
+
+
 class Generator:
     name = "base"
 
@@ -88,17 +132,31 @@ class Generator:
 
 
 class MultiAgentRAGGenerator(Generator):
-    """Full multi-agent pipeline from multiagent_rag_v3.py."""
+    """
+    Full multi-agent pipeline from multiagent_rag_v3.py.
+
+    `synth=None` is the published system: the answer is EvaluatorAgent's
+    template. Passing a client switches the answer to LLM prose synthesised
+    from the same retrieved docs with `build_synthesis_prompt` — the arm that
+    is answer-comparable to SingleAgentGenerator. Retrieval is identical
+    either way, so IR metrics do not move between the two arms.
+    """
 
     name = "marag"
 
-    def __init__(self, top_k: int = 4):
+    def __init__(self, top_k: int = 4, synth: Optional[LLMClient] = None):
         import multiagent_rag_v3 as marag
         self.marag = marag
         self.rewriter = marag.QueryRewriterAgent()
         self.retriever = marag.RetrieverAgent()
         self.evaluator = marag.EvaluatorAgent()
         self.top_k = top_k
+        self.synth = synth
+        if synth is not None:
+            self.name = "marag_llm"
+
+    def available(self) -> bool:
+        return True if self.synth is None else self.synth.available()
 
     def generate(self, query: str) -> Dict:
         with _silenced(self.marag):
@@ -106,12 +164,27 @@ class MultiAgentRAGGenerator(Generator):
             docs = self.retriever.run(rewrite["rewritten"], top_k=self.top_k,
                                       original_query=query)
             result = self.evaluator.run(docs, query)
-        return {
-            "answer": result.get("answer", ""),
+        template_answer = result.get("answer", "")
+        answer = template_answer
+        if self.synth is not None:
+            try:
+                answer = self.synth.generate(
+                    build_synthesis_prompt(query, docs, self.top_k),
+                    temperature=0.0, max_tokens=400)
+            except LLMError as e:
+                answer = f"[generation error: {e}]"
+        out = {
+            "answer": answer,
             "docs": [normalize_doc(d) for d in docs],
             "self_quality": result.get("quality"),
             "rewritten_query": rewrite.get("rewritten", ""),
         }
+        if self.synth is not None:
+            # The published template answer, kept for audit: the synthesised
+            # arm replaces what is scored, not what the system produced.
+            out["template_answer"] = template_answer
+            out["synth_model"] = self.synth.spec
+        return out
 
 
 class SingleAgentGenerator(Generator):
@@ -137,16 +210,7 @@ class SingleAgentGenerator(Generator):
     def generate(self, query: str) -> Dict:
         with _silenced(self.marag):
             docs = self.retriever.run(query, top_k=self.top_k, original_query=query)
-        ctx = "\n".join(
-            f"- [{d.get('source','?')}] {d.get('title','')}: {(d.get('detail') or '')[:200]}"
-            for d in docs[: self.top_k]
-        ) or "No documents retrieved."
-        prompt = (
-            "You are a software-update assistant. Answer the question using ONLY the "
-            "sources below. Be concise (2-3 sentences). If the sources do not contain "
-            "the answer, say so.\n\n"
-            f"Question: {query}\n\nSources:\n{ctx}\n\nAnswer:"
-        )
+        prompt = build_synthesis_prompt(query, docs, self.top_k)
         try:
             answer = self.client.generate(prompt, temperature=0.0, max_tokens=400)
         except LLMError as e:
@@ -185,7 +249,11 @@ class RawLLMGenerator(Generator):
 def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:
     """
     Build generators from short specs:
-      "marag"                      -> MultiAgentRAGGenerator
+      "marag"                      -> MultiAgentRAGGenerator (template answer)
+      "marag:ollama:mistral"       -> same pipeline, answer synthesised by that
+                                      model through the shared prompt, so its
+                                      answer scores are comparable to
+                                      single_agent's (reported as "marag_llm")
       "single_agent"               -> SingleAgentGenerator (mistral synthesis)
       "single_agent:ollama:llama3.1" -> SingleAgentGenerator with a given model
       "raw:ollama:llama3.1"        -> RawLLMGenerator over that model
@@ -195,6 +263,9 @@ def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:
     for spec in specs:
         if spec == "marag":
             gens.append(MultiAgentRAGGenerator(top_k=top_k))
+        elif spec.startswith("marag:"):
+            gens.append(MultiAgentRAGGenerator(
+                top_k=top_k, synth=make_client(spec.split(":", 1)[1])))
         elif spec == "single_agent":
             gens.append(SingleAgentGenerator(top_k=top_k))
         elif spec.startswith("single_agent:"):

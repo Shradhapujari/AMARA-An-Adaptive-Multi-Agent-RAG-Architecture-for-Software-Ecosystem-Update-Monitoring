@@ -41,12 +41,36 @@ venv311/bin/python -m eval_harness.run_eval --generators marag,raw:openai:gpt-4o
 
 | Spec | System |
 |---|---|
-| `marag` | Full 4-agent pipeline (Rewriter → Retriever → RLAIF Evaluator) |
+| `marag` | Full 4-agent pipeline (Rewriter → Retriever → RLAIF Evaluator); answer is the Evaluator's template |
+| `marag:ollama:mistral` | Same pipeline, answer synthesised by that model through the shared prompt — reported as `marag_llm` |
 | `single_agent` | Paper's baseline: raw query → keyword retrieval → 1 LLM call |
 | `single_agent:openai:gpt-4o` | Baseline with a chosen synthesis model |
 | `raw:ollama:llama3.1` | No retrieval — model answers directly (model-comparison column) |
 | `raw:openai:gpt-4o` | Same, GPT-4o (needs key) |
 | `raw:anthropic:claude-sonnet-4-6` | Same, Claude (needs key) |
+
+### Which arm to compare against the baseline
+
+`marag`'s answer is a template (headers, bullets, source tags); `single_agent`'s
+is LLM prose. An LLM judge scoring those two against each other measures answer
+*format* alongside content, so `marag` vs `single_agent` **answer** metrics are
+confounded — their retrieval metrics are not, since the retrieval path is
+identical in both arms.
+
+For an answer-quality claim, run the synthesising arm against the baseline with
+the same model on both sides:
+
+```bash
+venv311/bin/python -m eval_harness.run_eval \
+  --generators marag:ollama:mistral,single_agent \
+  --judge ollama:llama3.1
+```
+
+Both sides then use the identical prompt (`generators.build_synthesis_prompt`)
+and the identical model, so what remains between them is the retrieval
+pipeline. The judge stays a model that wrote neither answer. `per_query.jsonl`
+records `synth_model` and the `template_answer` that was set aside, so the
+published system's own output is still auditable.
 
 ## Output
 

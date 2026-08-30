@@ -10,6 +10,8 @@ Usage:
     python -m eval_harness.run_eval                       # defaults from config
     python -m eval_harness.run_eval --dataset table_50_questions.json --limit 20
     python -m eval_harness.run_eval --generators marag,raw:ollama:mistral
+    # answer-comparable head-to-head: both arms synthesise with the same model
+    python -m eval_harness.run_eval --generators marag:ollama:mistral,single_agent
     python -m eval_harness.run_eval --judge ollama:minimax-m2.7:cloud
 
 Outputs a timestamped folder under results/<run_id>/ containing:
@@ -143,6 +145,10 @@ def run(cfg: EvalConfig) -> str:
                 "latency_s": out["latency_s"],
                 "self_quality": out.get("self_quality"),
                 "answer": out["answer"],
+                # Only set by the synthesising multi-agent arm: which model wrote
+                # the scored answer, and the template answer it replaced.
+                "synth_model": out.get("synth_model"),
+                "template_answer": out.get("template_answer"),
                 "ir": ir,
                 "answer_scores": ans,
             })
