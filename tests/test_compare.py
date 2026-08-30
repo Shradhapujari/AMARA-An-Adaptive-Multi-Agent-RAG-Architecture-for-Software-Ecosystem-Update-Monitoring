@@ -121,3 +121,19 @@ class TestLoadPerQuery:
     def test_missing_dir_raises(self):
         with pytest.raises(FileNotFoundError):
             C.load_per_query(tempfile.mkdtemp())
+
+
+class TestBootstrapPFloor:
+    """A raw tail proportion of 0 claims more evidence than the resamples give."""
+
+    def test_p_is_never_exactly_zero(self):
+        from eval_harness.compare import paired_bootstrap
+        out = paired_bootstrap([1.0] * 20, [0.0] * 20, iters=1000)
+        assert out["p"] > 0.0
+        # two-sided: 2 * (0 crossings + 1) / (iters + 1)
+        assert out["p"] == pytest.approx(2.0 / 1001, rel=1e-6)
+
+    def test_identical_vectors_give_p_one(self):
+        from eval_harness.compare import paired_bootstrap
+        out = paired_bootstrap([0.5, 0.4, 0.6], [0.5, 0.4, 0.6], iters=500)
+        assert out["p"] == pytest.approx(1.0)

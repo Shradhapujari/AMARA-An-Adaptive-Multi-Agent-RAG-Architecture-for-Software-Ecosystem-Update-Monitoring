@@ -123,6 +123,12 @@ def paired_bootstrap(a: Sequence[float], b: Sequence[float],
 
     The p-value is the proportion of resamples whose mean difference falls on
     the opposite side of zero from the observed one, doubled.
+
+    The tail count uses the add-one (Davison & Hinkley) estimator
+    (count + 1) / (iters + 1) rather than the raw proportion. A raw proportion
+    is exactly 0.0 whenever no resample crosses zero, which then prints as
+    "<0.001" and survives Holm untouched -- claiming more evidence than
+    `iters` resamples can support. With `iters=10000` the floor is p ~= 2e-4.
     """
     diffs = [x - y for x, y in zip(a, b)]
     n = len(diffs)
@@ -138,9 +144,10 @@ def paired_bootstrap(a: Sequence[float], b: Sequence[float],
     lo = means[int(0.025 * iters)]
     hi = means[min(int(0.975 * iters), iters - 1)]
     if observed >= 0:
-        tail = sum(1 for m in means if m <= 0.0) / iters
+        crossings = sum(1 for m in means if m <= 0.0)
     else:
-        tail = sum(1 for m in means if m >= 0.0) / iters
+        crossings = sum(1 for m in means if m >= 0.0)
+    tail = (crossings + 1) / (iters + 1)
     return {"mean_diff": observed, "ci_low": lo, "ci_high": hi,
             "p": min(1.0, 2.0 * tail)}
 
@@ -314,7 +321,7 @@ def main() -> None:
     p.add_argument("run_dir", help="results/<run_id> directory produced by run_eval")
     p.add_argument("--baseline", default="single_agent",
                    help="system to compare everything against (default: single_agent)")
-    p.add_argument("--metrics", default="ndcg@5,recall@5,mrr,answer_score",
+    p.add_argument("--metrics", default="ndcg@5,recall@5,mrr,correctness,faithfulness,answer_relevance",
                    help="comma-separated metric names")
     p.add_argument("--bootstrap", type=int, default=10000)
     p.add_argument("--seed", type=int, default=42)

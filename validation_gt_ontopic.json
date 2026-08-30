@@ -1,0 +1,37 @@
+[
+  {
+    "id": 1,
+    "sub": "Ubiquiti",
+    "title": "G6 Bullet unstable?",
+    "url": "https://reddit.com/r/Ubiquiti/comments/1ske7g5/g6_bullet_unstable/",
+    "gt": "Hello!  Thanks for posting on r/Ubiquiti!  This subreddit is here to provide unofficial technical support to people who "
+  },
+  {
+    "id": 2,
+    "sub": "comfyui",
+    "title": "GGUF in latest versions? How to actually install nodes etc in latest versions?",
+    "url": "https://reddit.com/r/comfyui/comments/1skdt9y/gguf_in_latest_versions_how_to_actually_install/",
+    "gt": "Uh fixed the GGUF node not loading, the node installer doesn't even run the pip installer.  I assume this is because it'"
+  },
+  {
+    "id": 3,
+    "sub": "linuxquestions",
+    "title": "Updated to kernel 6.19.11 and now desktop doesnt load. Selected the previous version from grub menu and it works now. Should I just wait for the next version and will it fix it? Below is what i got from journalctl",
+    "url": "https://reddit.com/r/linuxquestions/comments/1skd07c/updated_to_kernel_61911_and_now_desktop_doesnt/",
+    "gt": "wait, sometimes those minor kernel updates don't work right. They will soon be corrected"
+  },
+  {
+    "id": 4,
+    "sub": "Fedora",
+    "title": "Updated to kernel 6.19.11 and now desktop doesnt load. Selected the previous version from grub menu and it works now. Should I just wait for the next version and will it fix it? Below is what i got from journalctl",
+    "url": "https://reddit.com/r/Fedora/comments/1skchnl/updated_to_kernel_61911_and_now_desktop_doesnt/",
+    "gt": "do you have nvidia graphics? probably driver modules might not be built "
+  },
+  {
+    "id": 5,
+    "sub": "comfyui",
+    "title": "I can't run Ace-Step 1.5 XL on Comfy!?",
+    "url": "https://reddit.com/r/comfyui/comments/1skchjl/i_cant_run_acestep_15_xl_on_comfy/",
+    "gt": "only the newest versions of comfyui support this. but I only succeeded after a complete reinstallation. the update didn'"
+  }
+]

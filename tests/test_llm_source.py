@@ -66,3 +66,76 @@ class TestLLMAliases:
             ("mixtral", "mistral"), ("bard", "gemini"),
         ]:
             assert mrag.VENDOR_ALIASES.get(alias) == canonical
+
+
+class TestAmbiguousProductNames:
+    """Bare substring matching put unrelated software in Tier 1 as "VERIFIED
+    LLM / AI Model Releases": the Opus audio codec, the Falcon web framework,
+    anything containing "phi", "o1" or "o3"."""
+
+    def test_substring_collision_is_not_llm(self):
+        assert not mrag._is_llm_release(_entry("Opusflow Media Encoder"))
+        assert not mrag._is_llm_release(_entry("Graphite"))
+
+    def test_weak_name_without_ai_vendor_is_not_llm(self):
+        assert not mrag._is_llm_release(
+            {"versionProductName": "Falcon", "versionProductBrand": "CrowdStrike"})
+        assert not mrag._is_llm_release(
+            {"versionProductName": "Opus", "versionProductBrand": "Xiph.Org"})
+
+    def test_weak_name_with_ai_vendor_is_llm(self):
+        assert mrag._is_llm_release(
+            {"versionProductName": "Falcon", "versionProductBrand": "TII"})
+        assert mrag._is_llm_release(
+            {"versionProductName": "Opus 4.5", "versionProductBrand": "Anthropic"})
+
+    def test_strong_name_stands_alone(self):
+        assert mrag._is_llm_release(_entry("Llama 3.1"))
+        assert mrag._is_llm_release(_entry("DeepSeek V3"))
+
+
+class TestQueryGate:
+    """The LLM feed is only reachable through a per-term search endpoint, so
+    each term costs a round trip. Non-AI questions must not pay for it."""
+
+    def test_ai_questions_pass(self):
+        assert mrag.query_mentions_llm("what is the latest llama release?")
+        assert mrag.query_mentions_llm("Did Anthropic ship a new model?")
+        assert mrag.query_mentions_llm("newest LLM releases")
+
+    def test_non_ai_questions_are_gated_out(self):
+        assert not mrag.query_mentions_llm("latest ubuntu kernel version")
+        assert not mrag.query_mentions_llm("is postgres 17 out yet")
+
+    def test_gate_short_circuits_before_any_http(self, monkeypatch):
+        called = []
+
+        class _Boom:
+            @staticmethod
+            def get(*a, **k):
+                called.append(a)
+                raise AssertionError("network touched for a non-AI query")
+
+        monkeypatch.setitem(__import__("sys").modules, "requests", _Boom)
+        assert mrag.fetch_llm_releases("latest ubuntu kernel version") == []
+        assert not called
+
+
+class TestRelevanceThreshold:
+    """min_overlap=1 over synonym-expanded terms admitted every row, because
+    "release"/"update" are injected into nearly every expansion."""
+
+    def test_generic_terms_do_not_clear_the_threshold(self):
+        assert "release" in mrag.LLM_GENERIC_TERMS
+        assert "update" in mrag.LLM_GENERIC_TERMS
+        assert "latest" in mrag.LLM_GENERIC_TERMS
+
+
+class TestTierMembership:
+    def test_llm_releases_is_tier1(self):
+        assert "llm_releases" in mrag.TIER1
+
+    def test_tier1_label_and_membership_agree(self):
+        for src in mrag.TIER1:
+            label, _ = mrag.get_source_label(src)
+            assert label == "✅ VERIFIED", f"{src} is in TIER1 but labelled {label}"

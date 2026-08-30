@@ -45,15 +45,22 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 from .config import ROOT
 
-# Answers that decline rather than assert. Matched case-insensitively against
-# the normalized prediction. Keep this list conservative: a phrase here turns
-# a would-be `incorrect` into a `missing`, which is scored more leniently.
-ABSTENTION_MARKERS = (
+# Answers that decline rather than assert. Matched on word boundaries against
+# the normalized prediction. Split by how much a marker can be trusted alone:
+#
+#   STRONG -- a refusal phrase that cannot plausibly sit inside a real answer.
+#             Seeing one is enough to call the whole prediction an abstention.
+#   WEAK   -- a bare word or short phrase that routinely appears *inside* a
+#             correct answer ("the severity is unknown, but Firefox 149.0.1 is
+#             the latest"). A weak marker may only downgrade a prediction that
+#             has already failed the ground-truth match, never one that passed.
+#
+# Keep both lists conservative: a phrase here turns a would-be `incorrect` into
+# a `missing`, which is scored more leniently.
+STRONG_ABSTENTION_MARKERS = (
     "i don't know",
     "i do not know",
-    "unknown",
     "no relevant",
-    "not found",
     "no matching source",
     "no matching vendor",
     "cannot determine",
@@ -61,12 +68,34 @@ ABSTENTION_MARKERS = (
     "unable to determine",
     "insufficient information",
     "insufficient evidence",
-    "no information",
     "do not answer",
     "does not answer",
     "not enough information",
     "invalid question",
 )
+
+WEAK_ABSTENTION_MARKERS = (
+    "unknown",
+    "not found",
+    "no information",
+)
+
+# Back-compat: callers that imported the flat tuple still work.
+ABSTENTION_MARKERS = STRONG_ABSTENTION_MARKERS + WEAK_ABSTENTION_MARKERS
+
+# Words that carry no discriminative weight when comparing a full-sentence gold
+# answer against a paraphrase of it. "published"/"shipped"/"released" are the
+# exact axis paraphrase varies along, so they must not count toward overlap;
+# the version, the date, the vendor and the channel *name* are what decide
+# whether an answer is right.
+_CONTENT_STOPWORDS = frozenset("""
+a an the this that these those it its is are was were be been being am
+on in at of for to from by with and or but as so then than there here
+new latest current recent stable available out now up
+release releases released releasing publish published publishes shipped ships
+ship update updates updated version versions channel channels build builds
+was_published were_published has have had does do did will would can could
+""".split())
 
 _ARTICLES = {"a", "an", "the"}
 _PUNCT = str.maketrans("", "", string.punctuation)
@@ -90,9 +119,49 @@ def normalize_answer(text: str) -> str:
 
 
 _VERSION_RE = re.compile(r"\bv?(\d+(?:[._]\d+){0,3})\b")
+_ISO_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july",
+           "august", "september", "october", "november", "december")
 
 
-def extract_versions(text: str) -> List[str]:
+def extract_dates(text: str) -> List[str]:
+    """Return ISO (YYYY-MM-DD) dates found in `text`.
+
+    Dates are the second decisive fact in this domain (the first is the version
+    number), and they survive normalization badly -- `normalize_answer` strips
+    the hyphens, turning "2026-06-26" into the bare token "20260626". Pulling
+    them out of the *raw* text keeps them comparable.
+    """
+    if not text:
+        return []
+    return ["-".join(m.groups()) for m in _ISO_DATE_RE.finditer(str(text))]
+
+
+def date_surface_forms(iso: str) -> List[str]:
+    """Normalized spellings a system might plausibly use for one ISO date.
+
+    A prediction that says "June 26, 2026" is stating the same fact as a gold
+    answer that says "2026-06-26"; scoring it wrong would punish formatting.
+    """
+    try:
+        y, m, d = iso.split("-")
+        month = _MONTHS[int(m) - 1]
+    except (ValueError, IndexError):
+        return [normalize_answer(iso)]
+    day = str(int(d))
+    forms = [
+        f"{y}{m}{d}",                 # what normalize_answer() makes of the ISO form
+        f"{y} {m} {d}",
+        f"{month} {day} {y}",
+        f"{month[:3]} {day} {y}",
+        f"{day} {month} {y}",
+        f"{day} {month[:3]} {y}",
+    ]
+    return [normalize_answer(f) for f in forms]
+
+
+def extract_versions(text: str, multipart_only: bool = False) -> List[str]:
     """Return version-like tokens, normalized to dot form ('7_0_0' -> '7.0.0').
 
     Version agreement is the decisive signal for this domain: a software update
@@ -102,35 +171,133 @@ def extract_versions(text: str) -> List[str]:
         return []
     out = []
     for m in _VERSION_RE.finditer(str(text)):
-        out.append(m.group(1).replace("_", "."))
+        v = m.group(1).replace("_", ".")
+        if multipart_only and "." not in v:
+            # A bare integer is not a version -- it is the year in a date, a
+            # day number, a CVE count. Only dotted forms are decisive.
+            continue
+        out.append(v)
     return out
 
 
-def is_abstention(prediction: str) -> bool:
-    norm = " " + normalize_answer(prediction) + " "
-    return any(normalize_answer(m) in norm for m in ABSTENTION_MARKERS)
+def _marker_present(norm_pred: str, marker: str) -> bool:
+    """Word-boundary test for one marker against an already-normalized string."""
+    m = normalize_answer(marker)
+    if not m:
+        return False
+    return re.search(r"(?<!\w)" + re.escape(m) + r"(?!\w)", norm_pred) is not None
+
+
+def is_abstention(prediction: str, strong_only: bool = False) -> bool:
+    """True when the prediction declines to answer.
+
+    Matching is on word boundaries, not raw substrings, so "unknowns" and
+    "well-known" no longer trip the "unknown" marker. Pass `strong_only` to
+    require an unambiguous refusal phrase; weak markers such as a bare
+    "unknown" are common *inside* correct answers and are only meaningful once
+    the prediction has already failed the ground-truth match.
+    """
+    norm = normalize_answer(prediction)
+    if not norm:
+        return False
+    markers = (STRONG_ABSTENTION_MARKERS if strong_only
+               else STRONG_ABSTENTION_MARKERS + WEAK_ABSTENTION_MARKERS)
+    return any(_marker_present(norm, m) for m in markers)
+
+
+# ------------------------------------------------------------------ matching
+
+def content_tokens(text: str) -> List[str]:
+    """Normalized tokens with filler removed, versions canonicalized.
+
+    A leading "v" is stripped from version-like tokens so that "v7.0.0" and
+    "7.0.0" -- which `normalize_answer` renders as "v700" and "700" -- agree.
+    """
+    out = []
+    for tok in normalize_answer(text).split():
+        if len(tok) > 1 and tok[0] == "v" and tok[1:].isdigit():
+            tok = tok[1:]
+        if tok in _CONTENT_STOPWORDS:
+            continue
+        out.append(tok)
+    return out
+
+
+def _dates_satisfied(gold_dates: Sequence[str], pred_norm: str) -> bool:
+    """Every date asserted by the gold answer must appear in the prediction,
+    in any of its common spellings."""
+    for iso in gold_dates:
+        if not any(_marker_present(pred_norm, form)
+                   for form in date_surface_forms(iso)):
+            return False
+    return True
+
+
+def _key_facts_match(gold: str, pred: str, pred_norm: str,
+                     require_version_match: bool, min_recall: float) -> bool:
+    """Fuzzy match for full-sentence gold answers.
+
+    Requiring the whole gold string to appear verbatim in the prediction scores
+    every paraphrase as a hallucination -- gold "Ubuntu 26.102.0 was published
+    on 2026-06-26 on the minor channel" against prediction "Ubuntu 26.102.0
+    shipped on 2026-06-26 on the minor release channel" is the same fact stated
+    two ways. So instead:
+
+      * every dotted version in the gold must appear in the prediction,
+      * every date in the gold must appear in the prediction, and
+      * the prediction must cover at least `min_recall` of the gold's remaining
+        content tokens.
+
+    The hard requirements are what keep this from being lenient: a prediction
+    with the wrong version or the wrong date fails outright no matter how much
+    surrounding wording it echoes.
+    """
+    gold_versions = set(extract_versions(gold, multipart_only=True))
+    if require_version_match and gold_versions:
+        pred_versions = set(extract_versions(pred, multipart_only=True))
+        if not gold_versions.issubset(pred_versions):
+            return False
+
+    gold_dates = extract_dates(gold)
+    if gold_dates and not _dates_satisfied(gold_dates, pred_norm):
+        return False
+
+    gold_toks = content_tokens(gold)
+    if not gold_toks:
+        # Nothing but filler and facts; the checks above already decided it.
+        return bool(gold_versions or gold_dates)
+    pred_toks = set(content_tokens(pred))
+    hits = sum(1 for t in gold_toks if t in pred_toks)
+    return (hits / len(gold_toks)) >= min_recall
 
 
 # ------------------------------------------------------------------ scoring
 
 def score_prediction(prediction: str,
                      ground_truth,
-                     require_version_match: bool = True) -> str:
+                     require_version_match: bool = True,
+                     min_recall: float = 0.7) -> str:
     """Label one prediction as 'correct' | 'incorrect' | 'missing'.
 
     `ground_truth` may be a string or a list of acceptable strings.
 
-    A prediction is `correct` when a normalized ground-truth string appears in
-    the normalized prediction. When both sides carry version numbers and
-    `require_version_match` is set, the versions must agree as well — this
-    stops "Firefox 148" from being scored correct against a gold answer of
-    "Firefox 149" merely because the product name matched.
+    A prediction is `correct` when a normalized ground-truth string appears
+    verbatim in the normalized prediction, or when it reproduces the gold
+    answer's key facts -- see `_key_facts_match`. When both sides carry version
+    numbers and `require_version_match` is set, the versions must agree as well
+    -- this stops "Firefox 148" from being scored correct against a gold answer
+    of "Firefox 149" merely because the product name matched.
+
+    The abstention check runs *after* the gold match, not before: "the severity
+    is unknown, but Firefox 149.0.1 is the latest" is a correct answer that
+    happens to contain a hedge, and scoring it `missing` silently deflates
+    accuracy. Only an unambiguous refusal short-circuits the match.
     """
     if ground_truth is None or (isinstance(ground_truth, str) and not ground_truth.strip()):
         return "missing"
     if prediction is None or not str(prediction).strip():
         return "missing"
-    if is_abstention(prediction):
+    if is_abstention(prediction, strong_only=True):
         return "missing"
 
     golds = ground_truth if isinstance(ground_truth, (list, tuple)) else [ground_truth]
@@ -147,6 +314,14 @@ def score_prediction(prediction: str,
                 if not (gold_versions & pred_versions):
                     continue
             return "correct"
+        if _key_facts_match(str(gold), str(prediction), pred_n,
+                            require_version_match, min_recall):
+            return "correct"
+
+    # No gold matched. A hedge word now decides between an honest decline and a
+    # confident wrong answer.
+    if is_abstention(prediction):
+        return "missing"
     return "incorrect"
 
 
