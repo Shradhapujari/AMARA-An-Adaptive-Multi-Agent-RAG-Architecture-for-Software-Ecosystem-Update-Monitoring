@@ -10,10 +10,31 @@
 
 ## TL;DR
 
-- **+17.2%** retrieval quality over a single-agent RAG baseline (paired *t*-test, *t*(49) = 2.32, *p* = 0.020).
+- **+17.2%** retrieval quality over a single-agent RAG baseline on the paper's own retrieval-quality score (paired *t*-test, *t*(49) = 2.32, *p* = 0.020) — **but see the correction below**.
 - **+9.3%** additional improvement from self-improvement memory across successive queries — no human feedback, no retraining (Cohen's *d* = 0.83).
 - **Zero hallucinated version numbers** across version-specific evaluation; every claim traces back to a retrieved source.
 - Runs **fully locally** on Apple Silicon (24 GB unified memory) via Ollama. No closed-model API calls.
+
+> ### ⚠️ Correction in progress
+>
+> Re-scored with standard IR metrics (nDCG@k / Recall@k / MRR over pooled judged
+> relevance) rather than the paper's bespoke keyword-overlap score, the
+> multi-agent pipeline **did not** beat the single-agent baseline — it lost badly
+> (nDCG@3 0.145 vs 0.765, n=10).
+>
+> The cause turned out to be a real defect, not a metric artifact: the Query
+> Rewriter's output *replaced* the user's wording at every live endpoint, so
+> **22 of the 23** relevant documents the baseline retrieved were never fetched
+> at all. Reranking cannot recover a document that was never retrieved.
+>
+> With the rewrite made additive (both phrasings searched, pools unioned) and
+> ranking scored against the original question, marag reaches nDCG@3 0.973 —
+> **parity with the baseline (0.988), not an improvement**, at roughly 2× the
+> latency.
+>
+> Full chain of measurements, confounds, and what it means for the paper:
+> [`eval_harness/FINDINGS.md`](eval_harness/FINDINGS.md). The 300-question
+> multi-ecosystem benchmark exists to settle this at a defensible sample size.
 
 ---
 
@@ -59,7 +80,7 @@ Four specialized agents coordinated by an Orchestrator, connected through a retr
 |---|---|
 | **Orchestrator** | Coordinates the pipeline; manages retrieval retries when the Evaluator flags low quality. |
 | **Query Rewriter** | Normalizes user terminology to match how vendors actually write release notes. Pulls from Self-Improvement Memory to bias future queries toward learned-successful terms. |
-| **Retriever** | Vendor-aware search across a registry of **14,223 vendors** and **628 software-related subreddits**. Restricts retrieval to vendor-specific sources when a vendor is detected. |
+| **Retriever** | Vendor-aware search across a registry of **14,223 vendors** and **628 software-related subreddits**. Restricts retrieval to vendor-specific sources when a vendor is detected. Searches **both** the rewritten and the original phrasing and unions the pools, then reranks the candidates against the user's original question (`rerank.py`). |
 | **Evaluator** | Deterministic 0.0–1.0 score combining retrieval volume, release-note matches, community matches, and CVE matches. Triggers a retry if score < 0.30. |
 
 ### Self-Improvement Memory
@@ -143,10 +164,46 @@ Treat a difference as real only when the CI excludes zero, the Holm-corrected
 p-value holds, **and** the win/loss split points the same way. A large mean
 difference with a near-even win/loss split means outliers are carrying it.
 
+**4. Ranking ablation** — the reranking stage is selected by environment
+variable, so which ranking signal the retriever uses is an experiment rather
+than an assumption:
+
+```bash
+for arm in none bm25 embed; do
+  MARAG_RERANK=$arm python -m eval_harness.run_eval \
+      --dataset validation_gt.json --generators marag,single_agent
+done
+```
+
+`none` reproduces the published behaviour and is kept deliberately as the
+ablation arm. `bm25` is dependency-free and deterministic. `embed` uses Ollama
+embeddings and degrades to `bm25` — reporting that it did so — rather than
+silently measuring something other than what it claims.
+
+### Larger benchmark
+
+`data/benchmark_300.json` — 300 questions mined from the live releasetrain.io
+endpoints, **60 per category** (releases / bugs / security / community /
+general) across **24 ecosystems** (Apple, Android, Windows, four Linux
+distros, browsers, containers, package managers, self-hosted apps, databases,
+LLM releases). Rebuild or refresh with:
+
+```bash
+python build_multiecosystem_benchmark.py            # replays the cache
+python build_multiecosystem_benchmark.py --refresh  # re-mines live
+```
+
+Two upstream data defects are handled rather than inherited: CVE rows label the
+*index token* instead of the affected product (templating them naively
+fabricates claims like *"Is iOS v4.2.0 vulnerable?"*), and some feed dates are
+corrupt. Rows that cannot be attributed confidently are dropped, and every
+question carries a `source` field so mined and templated items stay
+distinguishable.
+
 ### Tests
 
 ```bash
-python -m pytest tests/ -q      # 54 offline tests, no network required
+python -m pytest tests/ -q      # 191 offline tests, no network required
 ```
 
 
@@ -262,6 +319,8 @@ Key entry points:
 | `multiagent_rag_v3.py` | Main four-agent system (pure Python implementation) |
 | `unified_agent_system.py` | Single-agent baseline used for comparison |
 | `rag_smolagents_v2.py` | Equivalent implementation using HuggingFace smolagents |
+| `rerank.py` | Candidate reranking for the Retriever — `none` / `bm25` / `embed` backends, selected by `MARAG_RERANK` |
+| `build_multiecosystem_benchmark.py` | Builds `data/benchmark_300.json` from the live endpoints; idempotent, cached, `--refresh` to re-mine |
 | `self_improving_agent.py` | Persistent term-weight memory for the Self-Improvement Memory |
 | `evaluate_v3.py` | Evaluation harness (latest version) |
 | `test_apis.py` | Standalone test of the underlying data-source APIs |
@@ -296,7 +355,9 @@ We're explicit about these in the paper (§5) — they're real, and good directi
 
 ## Roadmap
 
-- [ ] Larger multi-ecosystem benchmark
+- [x] Larger multi-ecosystem benchmark — `data/benchmark_300.json` (300 questions, 24 ecosystems, 60 per category). Built; the full evaluation run against it is the next step.
+- [x] Rerank candidates against the original question rather than the rewrite — closed the retrieval defect described in the correction above.
+- [ ] Independent judge (`--judge openai:gpt-4o`) to remove the judge/system model-family overlap
 - [ ] Embedding-based vendor matching (replace static alias dictionary)
 - [ ] Learned reward model for the Evaluator (replace heuristic scoring)
 - [ ] Adaptive threshold selection
