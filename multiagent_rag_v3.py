@@ -9,7 +9,7 @@ Run:
     python multiagent_rag_v3.py demo     # all 3 demo queries
 """
 
-import json, time, sys, urllib.request
+import json, re, time, sys, urllib.request
 from pathlib import Path
 
 DATA_PATH = Path(__file__).parent / "data" / "enhanced_automated_sentiment_results.json"
@@ -18,6 +18,85 @@ DATA_PATH = Path(__file__).parent / "data" / "enhanced_automated_sentiment_resul
 RELEASES_API = "https://releasetrain.io/api/v/"
 REDDIT_API   = "https://releasetrain.io/api/reddit/query/positive"
 CVE_API      = "https://releasetrain.io/api/reddit/query/cve"
+# LLM / AI model releases. Served by the same /api/v/ collection; entries are
+# distinguished by versionProductType (and by product name for providers whose
+# type field is not set). See LLM_PRODUCT_TYPES / LLM_PRODUCT_NAMES below.
+LLM_API      = "https://releasetrain.io/api/v/"
+
+# Product types that identify an LLM release in the versions collection.
+LLM_PRODUCT_TYPES = {"llm", "ai", "ai_model", "aimodel", "model", "genai"}
+
+# Fallback identification by product name, for entries whose versionProductType
+# is missing or generic. Matched on word boundaries against versionProductName
+# -- a bare substring test classifies "Opusflow" and "Falcon Framework" as
+# model releases and injects them into Tier 1 as verified AI records.
+#
+# Names are split by how much they can be trusted alone. A name in
+# LLM_PRODUCT_NAMES_STRONG identifies a model on its own. A name in
+# LLM_PRODUCT_NAMES_WEAK is a real English word or a short token that collides
+# with unrelated software -- "opus" the audio codec, "falcon" the Python web
+# framework and the CrowdStrike agent, "sonnet"/"haiku" the poetry forms, the
+# "o1"/"o3" that appear in build strings -- so it only counts when the vendor
+# brand corroborates it.
+LLM_PRODUCT_NAMES_STRONG = {
+    "gpt", "chatgpt", "claude",
+    "gemini", "palm",
+    "llama", "codellama", "llama.cpp",
+    "mistral", "mixtral", "codestral",
+    "deepseek", "qwen", "grok",
+    "ollama", "vllm", "lmstudio",
+}
+
+LLM_PRODUCT_NAMES_WEAK = {
+    "o1", "o3", "codex",
+    "sonnet", "opus", "haiku",
+    "gemma", "phi", "command-r", "falcon",
+}
+
+# Back-compat: the flat set some call sites still import.
+LLM_PRODUCT_NAMES = LLM_PRODUCT_NAMES_STRONG | LLM_PRODUCT_NAMES_WEAK
+
+# Vendors that ship models. Used to corroborate a weak product-name hit.
+LLM_VENDOR_BRANDS = {
+    "openai", "anthropic", "google", "deepmind", "google deepmind",
+    "meta", "meta ai", "mistral", "mistral ai", "alibaba", "deepseek",
+    "xai", "x ai", "microsoft", "tii", "cohere", "nvidia", "ai21",
+    "stability", "stability ai", "hugging face", "huggingface",
+}
+
+# Generic AI vocabulary that makes a *question* worth asking the LLM feed
+# about, even when it names no specific model.
+LLM_QUERY_HINTS = {
+    "llm", "llms", "ai", "genai", "model", "models", "foundation model",
+    "language model", "chatbot", "embedding", "embeddings", "transformer",
+    "inference", "frontier model",
+}
+
+
+def _boundary_res(names):
+    """Compile word-boundary matchers for names that may contain . or -."""
+    return [re.compile(r"(?<![a-z0-9])" + re.escape(n) + r"(?![a-z0-9])")
+            for n in sorted(names)]
+
+
+_LLM_NAME_RES_STRONG = _boundary_res(LLM_PRODUCT_NAMES_STRONG)
+_LLM_NAME_RES_WEAK   = _boundary_res(LLM_PRODUCT_NAMES_WEAK)
+_LLM_QUERY_RES       = _boundary_res(
+    LLM_PRODUCT_NAMES_STRONG | LLM_VENDOR_BRANDS | LLM_QUERY_HINTS)
+
+
+def query_mentions_llm(query) -> bool:
+    """True when the question plausibly concerns an LLM / AI model.
+
+    The LLM feed is only reachable through a per-term search endpoint, so
+    querying it costs one HTTP round trip per term. Running that on every
+    question -- including "latest Ubuntu kernel" -- buys nothing and adds
+    seconds to each retrieval, so gate on the question first.
+    """
+    q = (query or "").lower()
+    if not q.strip():
+        return False
+    return any(rx.search(q) for rx in _LLM_QUERY_RES)
 
 SYNONYMS = {
     "linux":["linux","ubuntu","debian","kernel","fedora","redhat"],
@@ -77,6 +156,152 @@ def fetch_live_releases(query, limit=5, min_overlap=2):
         return [d for _,d in scored[:limit]]
     except Exception as e:
         return []
+
+def _is_llm_release(v):
+    """True if a /api/v/ entry describes an LLM / AI model release.
+
+    Declared product type or tags settle it outright. Falling back to the
+    product name, a strong name is enough on its own; a weak one (see
+    LLM_PRODUCT_NAMES_WEAK) also needs the vendor brand to be an AI vendor,
+    so the Opus audio codec and the Falcon web framework stay out of Tier 1.
+    """
+    ptype = (v.get("versionProductType") or "").strip().lower()
+    if ptype in LLM_PRODUCT_TYPES:
+        return True
+
+    tags = [str(x).lower() for x in (v.get("versionReleaseTags") or [])]
+    tags += [str(x).lower() for x in (v.get("versionSearchTags") or [])]
+    if any(tag in LLM_PRODUCT_TYPES for tag in tags):
+        return True
+
+    name = (v.get("versionProductName") or "").lower()
+    if any(rx.search(name) for rx in _LLM_NAME_RES_STRONG):
+        return True
+
+    if any(rx.search(name) for rx in _LLM_NAME_RES_WEAK):
+        brand = (v.get("versionProductBrand") or "").lower()
+        return any(b in brand for b in LLM_VENDOR_BRANDS)
+
+    return False
+
+
+# Query words that carry no topical signal. They are in SYNONYMS (so
+# expand_terms injects them into almost every expansion) and they appear in
+# nearly every release note, which makes them useless as a relevance
+# threshold: with min_overlap=1 they alone would admit every row the search
+# endpoint returns.
+LLM_GENERIC_TERMS = {
+    "release", "releases", "released", "update", "updates", "updated",
+    "upgrade", "version", "versions", "changelog", "new", "newest",
+    "latest", "current", "software", "patch", "what", "which", "when",
+}
+
+
+def fetch_llm_releases(query, limit=4, min_overlap=1, gate=True, max_terms=4):
+    """Retrieve LLM / AI model releases from the lake.
+
+    Mirrors fetch_live_releases but restricts the candidate set to LLM
+    entries. min_overlap defaults to 1 because model questions are often
+    short ("latest llama version") and rarely produce two term overlaps --
+    but it is counted over *specific* terms only (see LLM_GENERIC_TERMS),
+    so a generic word like "release" can no longer clear the bar by itself.
+
+    NOTE: unlike fetch_live_releases, this does NOT GET the bare LLM_API
+    feed. Confirmed against the live API: that feed only ever returns the
+    most recent ~1000 OS/browser releases and never surfaces LLM rows.
+    LLM/AI-model records live behind the search endpoint instead
+    (LLM_API + "search?q=<term>"), so we query it per term and merge.
+
+    Because each term costs a round trip, the searches are gated on the
+    question actually mentioning AI (`gate`), capped at `max_terms`, and
+    issued concurrently. Sequential unbounded searches added up to ~2 min
+    of latency to every retrieval, LLM-related or not.
+    """
+    try:
+        if gate and not query_mentions_llm(query):
+            return []
+
+        import requests as req
+        from concurrent.futures import ThreadPoolExecutor
+
+        exp = expand_terms(query)
+        # Use the literal query words (in order) to search -- expand_terms()
+        # returns an unordered set of synonyms, and capping that arbitrarily
+        # can drop the one term that actually matters (e.g. "llama") in
+        # favor of generic synonyms like "release"/"update". expand_terms()
+        # is still used below for relevance scoring.
+        raw_terms = list(dict.fromkeys((query or "").lower().split()))
+        search_terms = [t for t in raw_terms if len(t) > 2] or raw_terms
+        # Search the most discriminative words first, so the max_terms cut
+        # drops "latest"/"version" rather than "llama".
+        search_terms = ([t for t in search_terms if t not in LLM_GENERIC_TERMS]
+                        + [t for t in search_terms if t in LLM_GENERIC_TERMS])
+        if not search_terms:
+            search_terms = [(query or "").strip()]
+        search_terms = [t for t in search_terms[:max_terms] if t]
+
+        def _search(term):
+            try:
+                r = req.get(f"{LLM_API}search", params={"q": term}, timeout=8)
+            except Exception:
+                return {}
+            if r.status_code != 200:
+                return {}
+            try:
+                raw = r.json()
+            except Exception:
+                return {}
+            return raw if isinstance(raw, dict) else {}
+
+        with ThreadPoolExecutor(max_workers=min(4, len(search_terms))) as pool:
+            responses = list(pool.map(_search, search_terms))
+
+        all_v = []
+        seen_ids = set()
+        for raw in responses:
+            for key, val in raw.items():
+                if not isinstance(val, list):
+                    continue
+                for v in val:
+                    vid = v.get("_id")
+                    if vid and vid in seen_ids:
+                        continue
+                    if vid:
+                        seen_ids.add(vid)
+                    all_v.append(v)
+
+        # Score on the identity fields only. Including the full release notes
+        # made the haystack so large that every row cleared min_overlap on a
+        # generic synonym, which is how unrelated records reached Tier 1.
+        specific = {t for t in exp if t not in LLM_GENERIC_TERMS and len(t) > 2}
+        scored = []
+        for v in all_v:
+            if not _is_llm_release(v):
+                continue
+            txt = (" ".join(str(x) for x in v.get("versionSearchTags", [])) + " " +
+                   str(v.get("versionProductName", "")) + " " +
+                   str(v.get("versionProductBrand", "")) + " " +
+                   str(v.get("versionNumber", ""))).lower()
+            overlap = sum(1 for t in specific if t in txt)
+            if overlap >= min_overlap:
+                scored.append((overlap, {
+                    "title": f"{v.get('versionProductBrand','')} {v.get('versionProductName')} "
+                             f"v{v.get('versionNumber')} — {str(v.get('versionReleaseNotes',''))[:80]}".strip(),
+                    "subreddit": v.get("versionReleaseChannel", "release"),
+                    "sentiment": "Negative" if "SECURITY" in v.get("classification", {}).get("securityType", []) else "Positive",
+                    "score": overlap,
+                    "divergence": 0.0,
+                    "source": "llm_releases",
+                    "url": v.get("versionUrl", "") or v.get("versionReleaseNotes", ""),
+                    "date": v.get("versionReleaseDate", ""),
+                    "verified": True,
+                    "tier": 1,
+                }))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [d for _, d in scored[:limit]]
+    except Exception:
+        return []
+
 
 def fetch_live_reddit(query, limit=5):
     try:
@@ -299,7 +524,8 @@ def fetch_github_releases(query, limit=4):
 # ─────────────────────────────────────────────────────────────
 
 # Source trust tiers
-TIER1 = ["vendor_releases","releases","apple_rss","cisa_kev","circl_cve","nvd","cve"]
+TIER1 = ["vendor_releases","releases","llm_releases","apple_rss","cisa_kev",
+         "circl_cve","nvd","cve"]
 TIER2 = ["vendor_reddit","reddit_live","reddit_search","google_news","github"]
 
 APPLE_RSS  = "https://developer.apple.com/news/releases/rss/releases.rss"
@@ -464,6 +690,7 @@ def get_source_label(source):
         "nvd":             ("✅ VERIFIED", "NVD/NIST Official CVE Database"),
         "releases":        ("✅ VERIFIED", "releasetrain.io Release Notes (general)"),
         "cve":             ("✅ VERIFIED", "releasetrain.io CVE Advisories"),
+        "llm_releases":    ("✅ VERIFIED", "releasetrain.io — LLM / AI Model Releases"),
         "vendor_reddit":   ("🟡 COMMUNITY", "Reddit — Vendor Subreddit (targeted)"),
         "reddit_live":     ("🟡 COMMUNITY", "Reddit Community Posts (releasetrain.io)"),
         "reddit_search":   ("🟡 COMMUNITY", "Reddit Community Posts (direct search)"),
@@ -527,6 +754,15 @@ VENDOR_ALIASES = {
     "truenas": "truenas", "aws": "aws", "spotify": "spotify",
     "tinder": "tinder", "otbr": "homeassistant",
     "neovim": "neovim", "nvim": "neovim",
+    # LLM / AI models
+    "gpt": "gpt", "chatgpt": "gpt", "openai": "gpt", "gpt-4": "gpt", "gpt-5": "gpt",
+    "claude": "claude", "anthropic": "claude", "sonnet": "claude",
+    "opus": "claude", "haiku": "claude",
+    "gemini": "gemini", "bard": "gemini", "gemma": "gemma",
+    "llama": "llama", "llama3": "llama", "llama 3": "llama", "codellama": "llama",
+    "mistral": "mistral", "mixtral": "mistral", "codestral": "mistral",
+    "deepseek": "deepseek", "qwen": "qwen", "grok": "grok", "xai": "grok",
+    "phi": "phi", "ollama": "ollama", "vllm": "vllm",
     "microsoftedge": "MicrosoftEdge",
 }
 
@@ -975,6 +1211,37 @@ def fetch_vendor_reddit(vendor: str, query: str = "", limit: int = 10) -> list:
         return []
 
 
+def doc_key(doc: dict) -> str:
+    """Identity of a retrieved document, for union-ing pools from two searches.
+
+    The URL is the reliable identifier; titles repeat across feeds (every CISA
+    KEV row starts the same way) and are only a fallback when a source omits
+    the URL entirely.
+    """
+    url = (doc.get("url") or "").strip()
+    if url:
+        return url
+    return f"{doc.get('title','')}|{doc.get('source','')}".strip().lower()
+
+
+def doc_keys(docs) -> set:
+    return {doc_key(d) for d in docs}
+
+
+def dedupe_docs(docs, seen=None) -> list:
+    """Order-preserving dedupe. `seen` pre-seeds keys claimed by a higher tier,
+    so a document promoted into Tier 1 is not repeated in Tier 2."""
+    seen = set(seen) if seen else set()
+    out = []
+    for d in docs:
+        k = doc_key(d)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(d)
+    return out
+
+
 def load_docs():
     """Load local dataset as fallback only."""
     if DATA_PATH.exists():
@@ -1098,6 +1365,14 @@ class RetrieverAgent:
             VENDOR_SUBREDDITS = {
                 "linux":     ["linux","linuxquestions","Fedora","Ubuntu","debian"],
                 "ollama":    ["ollama","LocalLLaMA","openclaw"],
+                "llama":     ["LocalLLaMA","ollama","MachineLearning"],
+                "gpt":       ["OpenAI","ChatGPT","LocalLLaMA"],
+                "claude":    ["ClaudeAI","Anthropic","LocalLLaMA"],
+                "gemini":    ["Bard","GoogleGeminiAI","LocalLLaMA"],
+                "mistral":   ["LocalLLaMA","MistralAI"],
+                "deepseek":  ["LocalLLaMA","DeepSeek"],
+                "qwen":      ["LocalLLaMA"],
+                "grok":      ["grok","LocalLLaMA"],
                 "comfyui":   ["comfyui"],
                 "openclaw":  ["openclaw"],
                 "Ubiquiti":  ["Ubiquiti"],
@@ -1114,46 +1389,97 @@ class RetrieverAgent:
                 subs_to_search = VENDOR_SUBREDDITS.get(v, [v])
                 for sub in subs_to_search[:3]:
                     print(f"  Fetching : releasetrain.io/api/reddit/by-subreddit?q={sub} ...")
+                    # Same rewrite-augments-search rule as the general sources
+                    # below: the subreddit filter is keyed on the vendor, but
+                    # the ranking within it is keyed on the query wording, so
+                    # both phrasings have to be asked for.
                     vendor_reddit += fetch_vendor_reddit(sub, query=rewritten_query, limit=8)
+                    if original_query and original_query.strip().lower() != rewritten_query.strip().lower():
+                        vendor_reddit += fetch_vendor_reddit(sub, query=original_query, limit=8)
 
-        # ── STEP 3: General sources (always run as fallback/supplement) ──
-        print(f"  Fetching : releasetrain.io/api/v/ (general) ...")
-        releases = fetch_live_releases(rewritten_query, limit=4) if not vendor_releases else []
+        # ── STEP 3: General sources, fetched for BOTH phrasings ──
+        # Measured on the 10-question ground-truth set: 22 of the 23 relevant
+        # documents the single-agent baseline retrieved were never fetched by
+        # this pipeline at all, because the rewrite *replaced* the user's
+        # wording at fetch time. Reranking cannot recover a document that was
+        # never in the pool, so the rewrite must augment the search rather than
+        # substitute for it. Both phrasings are searched and the pools unioned.
+        search_queries = [rewritten_query]
+        if original_query and original_query.strip().lower() != rewritten_query.strip().lower():
+            search_queries.append(original_query)
 
-        print(f"  Fetching : Apple Official RSS ...")
-        apple = fetch_apple_rss(rewritten_query, limit=3)
+        gen_releases, gen_apple, gen_cisa, gen_circl = [], [], [], []
+        gen_cve, gen_llm, gen_reddit, gen_news = [], [], [], []
 
-        print(f"  Fetching : CISA KEV (actively exploited CVEs) ...")
-        cisa = fetch_cisa_kev(rewritten_query, limit=2)
-
-        print(f"  Fetching : CIRCL Apple CVE feed ...")
-        circl = fetch_circl_apple(rewritten_query, limit=2)
-
-        print(f"  Fetching : releasetrain.io/api/reddit/query/cve ...")
-        cve = fetch_live_cve(rewritten_query, limit=2)
-
-        print(f"  Fetching : releasetrain.io/api/reddit/query/positive ...")
-        reddit = fetch_live_reddit(rewritten_query, limit=3) if not vendor_reddit else []
-
-        print(f"  Fetching : Google News RSS ...")
-        news = fetch_google_news(rewritten_query, limit=2)
+        for qi, q in enumerate(search_queries):
+            tag = "rewritten" if qi == 0 else "original"
+            print(f"  Fetching : general sources for {tag} query ...")
+            if not vendor_releases:
+                gen_releases += fetch_live_releases(q, limit=4)
+            gen_apple += fetch_apple_rss(q, limit=3)
+            gen_cisa  += fetch_cisa_kev(q, limit=2)
+            gen_circl += fetch_circl_apple(q, limit=2)
+            gen_cve   += fetch_live_cve(q, limit=2)
+            # Gate on the question before spending a round trip per search term.
+            # Check the original wording too: a rewrite can drop the model name.
+            if query_mentions_llm(f"{original_query or ''} {rewritten_query}"):
+                gen_llm += fetch_llm_releases(q, limit=3, gate=False)
+            if not vendor_reddit:
+                gen_reddit += fetch_live_reddit(q, limit=3)
+            gen_news += fetch_google_news(q, limit=2)
 
         # ── Tier 1: vendor-specific first, then general verified ──
-        tier1 = vendor_releases + releases + apple + cisa + circl + cve
+        tier1 = dedupe_docs(vendor_releases + gen_releases + gen_apple
+                            + gen_cisa + gen_circl + gen_cve + gen_llm)
         # ── Tier 2: vendor reddit first, then general community ──
-        tier2 = vendor_reddit + reddit + news
+        tier2 = dedupe_docs(vendor_reddit + gen_reddit + gen_news, seen=doc_keys(tier1))
 
-        # Boost: if Apple RSS or Reddit has direct query match, put it first
-        q_low = rewritten_query.lower()
-        boosted, rest = [], []
-        for d in tier1 + tier2:
-            title = d.get("title","").lower()
-            # Direct product/topic match — move to front
-            if any(w in title for w in q_low.split()[:4] if len(w)>3):
-                boosted.append(d)
-            else:
-                rest.append(d)
-        results = boosted + rest
+        # ── Rank the candidate pool against the ORIGINAL question ──
+        # The rewritten query is what widened the pool (recall); ranking it a
+        # second time destroys precision, because a rewrite replaces the user's
+        # own words with verbose document vocabulary. See rerank.py and
+        # eval_harness/FINDINGS.md for the measurement that motivated this.
+        import rerank as _rerank
+
+        pool = tier1 + tier2
+        _rank_query = original_query if original_query else rewritten_query
+        # One reranker per process. EmbeddingReranker memoises embeddings and
+        # make_reranker() spends an extra probe embedding on every call, so
+        # building one per retrieval threw the cache away before it could hit.
+        _reranker = _rerank.get_reranker()
+        print(f"  Ranking  : {_reranker.spec} over {len(pool)} candidates "
+              f"(query: {'original' if original_query else 'rewritten'})")
+        if _reranker.degraded:
+            print(f"  ⚠ Ranking : degraded — {_reranker.reason}")
+
+        def _safe_rank(docs):
+            """Rank, but never let ranking take the run down.
+
+            EmbeddingReranker.rank() does live HTTP and can raise *after*
+            available() succeeded (timeout, connection reset). Retrieval used
+            to be incapable of raising; keep it that way by degrading to BM25,
+            which needs no network, and finally to the retriever's own order.
+            """
+            if not docs:
+                return []
+            try:
+                return _reranker.rank(_rank_query, docs, top_k=len(docs))
+            except Exception as e:
+                print(f"  ⚠ Ranking : {type(e).__name__} — falling back to BM25")
+                try:
+                    return _rerank.BM25Reranker().rank(_rank_query, docs,
+                                                       top_k=len(docs))
+                except Exception:
+                    return list(docs)
+
+        # Rank *within* tier, then concatenate. Ranking the flat pool discards
+        # the verified-before-community prior: BM25 favours long Reddit bodies
+        # that repeat the query terms, so a release question could come back as
+        # four community posts and zero verified records -- which flips the
+        # Evaluator's tier1_hits/has_live branches and empties the
+        # "VERIFIED SOURCES" block. The top_k cut still happens once, at the
+        # return.
+        results = _safe_rank(tier1) + _safe_rank(tier2)
 
         # Fallback to local if live APIs return nothing
         if not results:
@@ -1250,8 +1576,12 @@ class EvaluatorAgent:
 
         from datetime import datetime as _dt
         verified_src = list(set(d.get('source','local') for d in docs))
-        has_live = any(s in ['releases','reddit_live','cve','google_news','github'] for s in verified_src)
-        has_live     = any(s in ['releases','reddit_live','cve'] for s in verified_src)
+        # Sources that mean the answer came off a live API this run, rather than
+        # out of the bundled dataset. llm_releases belongs here: it is a live
+        # releasetrain.io query like 'releases' and 'cve' are.
+        LIVE_SOURCES = ['releases', 'llm_releases', 'vendor_releases',
+                        'reddit_live', 'cve']
+        has_live     = any(s in LIVE_SOURCES for s in verified_src)
         confidence   = "HIGH" if quality >= 0.5 else "MEDIUM" if quality >= 0.3 else "LOW"
         verified_tag = "✅ VERIFIED from live releasetrain.io APIs" if has_live else "⚠️  From local dataset — may not reflect today's data"
 
@@ -1483,7 +1813,12 @@ class ManagerAgent:
 
         if "negative" in result["signal"] and "retry" not in query:
             print(f"\n  Manager: RLAIF signal negative — retrying with broader query...")
-            docs   = self.retriever.run(query + " software update release", top_k=4)
+            # Widen the FETCH with filler terms, but keep ranking against the
+            # user's own words -- without original_query the reranker falls
+            # back to the padded string, which is exactly the precision loss
+            # rerank.py exists to fix.
+            docs   = self.retriever.run(query + " software update release",
+                                        top_k=4, original_query=query)
             result = self.evaluator.run(docs, query)
 
         return result["answer"]

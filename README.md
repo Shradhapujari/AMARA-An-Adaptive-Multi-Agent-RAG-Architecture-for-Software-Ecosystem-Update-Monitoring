@@ -76,6 +76,7 @@ Top learned terms after 50 queries (interpretable on inspection): `vulnerability
 - Vendor registry — 6,578 entries
 - Software release notes — 31,958 entries
 - CVE / vulnerability advisories — 24,139 entries
+- LLM / AI model releases — served from the same `/api/v/` collection, filtered by product type/name (OpenAI, Anthropic, Google, Meta, Mistral, DeepSeek, Qwen, xAI, Ollama). Browsable at <https://releasetrain.io/?type=llm>
 - Apple Developer RSS, CISA KEV, CIRCL CVE Atom feed (dedicated Apple-side coverage)
 
 **Community (Tier 2):**
@@ -85,6 +86,69 @@ Top learned terms after 50 queries (interpretable on inspection): `vulnerability
 - Google News
 
 Verified and community sources are kept separate and weighted differently in the Evaluator's score.
+
+The lake behind these endpoints is a MongoDB store covering Reddit posts, Stack
+Overflow posts, software release notes, CVE advisories, and LLM/AI model
+releases. The retrieval layer currently consumes release notes, CVE, LLM
+releases, and Reddit; **Stack Overflow is present in the lake but not yet wired
+into the Retriever** — see `TODO` in the roadmap below.
+
+
+## Evaluation
+
+Two independent layers, so a result never rests on our own scoring alone.
+
+**1. IR + judge metrics** (`eval_harness/`) — recall@k, nDCG@k, precision@k, MRR
+against pooled, judge-labelled qrels, plus LLM-judged answer scores.
+
+```bash
+python -m eval_harness.run_eval --dataset table_50_questions.json --limit 50
+```
+
+**2. Established-benchmark scoring** (`eval_harness/benchmarks.py`) — deterministic
+CRAG-style labelling of every answer as `correct` / `incorrect` / `missing`, with
+
+```
+accuracy = correct/n     hallucination = incorrect/n
+missing  = missing/n     crag_score    = accuracy - hallucination
+```
+
+No LLM in the loop, so it is reproducible and independent of the model under
+test. `crag_score` penalizes a confident wrong answer and merely declines to
+reward an abstention — which is exactly the property our own Evaluator score
+cannot express, and the reason a system that says *"the sources do not answer
+this"* is scored strictly above one that guesses.
+
+```bash
+python -m eval_harness.run_eval --dataset crag_questions.jsonl --benchmark crag
+```
+
+Answer matching is version-aware: a prediction naming the right product but the
+wrong version scores `incorrect`, not `correct`.
+
+**3. Head-to-head comparison** (`eval_harness/compare.py`) — paired statistics
+over a completed run, since every system answers the same questions:
+
+```bash
+python -m eval_harness.compare results/<run_id> --baseline single_agent \
+    --metrics ndcg@5,recall@5,mrr,answer_score
+```
+
+Reports the mean paired difference with a bootstrap 95% CI, a paired t-test, a
+non-parametric bootstrap p-value, Holm correction across the comparison family,
+and win/tie/loss counts. Pure Python — no scipy or numpy needed. The t-test
+agrees with `scipy.stats.ttest_rel` to 1e-8 (see `tests/test_compare.py`).
+
+Treat a difference as real only when the CI excludes zero, the Holm-corrected
+p-value holds, **and** the win/loss split points the same way. A large mean
+difference with a near-even win/loss split means outliers are carrying it.
+
+### Tests
+
+```bash
+python -m pytest tests/ -q      # 54 offline tests, no network required
+```
+
 
 ---
 

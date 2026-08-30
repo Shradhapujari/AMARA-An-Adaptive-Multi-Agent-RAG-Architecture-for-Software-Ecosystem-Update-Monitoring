@@ -1,0 +1,698 @@
+{
+  "api_calls": {
+    "cache": 292,
+    "failed": 19,
+    "network": 0,
+    "not_catalogued": 0
+  },
+  "backfilled": 0,
+  "backfilled_cells": [],
+  "categories": {
+    "bugs": 60,
+    "community": 60,
+    "general": 60,
+    "releases": 60,
+    "security": 60
+  },
+  "coverage_gap_cells": [
+    [
+      "arch",
+      "security"
+    ]
+  ],
+  "ecosystems": {
+    "android": 13,
+    "apple_ios": 13,
+    "apple_macos": 13,
+    "arch": 13,
+    "cargo_rust": 12,
+    "chrome": 13,
+    "debian": 13,
+    "devtools": 12,
+    "docker": 13,
+    "fedora": 13,
+    "firefox": 13,
+    "homeassistant": 12,
+    "kubernetes": 12,
+    "linux_kernel": 13,
+    "llm_ai": 12,
+    "mysql": 12,
+    "nas_selfhosted": 12,
+    "nosql": 12,
+    "npm_node": 12,
+    "pip_python": 12,
+    "postgres": 12,
+    "ubuntu": 13,
+    "windows": 13,
+    "wordpress": 12
+  },
+  "failed_requests": [
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/iphone{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/ipados{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/kernel{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/nixos{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/containerd{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/podman{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/npm{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/pip{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/cargo{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/home assistant{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/esphome{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/zigbee2mqtt{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/openhab{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/synology{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/woocommerce{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/postgres{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/valkey{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/gitlab{}"
+    },
+    {
+      "error": "offline, no cache",
+      "url": "/api/c/name/Claude 3.5 Sonnet (new){}"
+    }
+  ],
+  "generated_by": "build_multiecosystem_benchmark.py",
+  "mined": 300,
+  "not_catalogued_404": [],
+  "pool_sizes": {
+    "android": {
+      "bugs": {
+        "mined_reddit_title": 89,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 140,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 314,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 9,
+        "mined_release_record": 0
+      },
+      "security": {
+        "mined_reddit_title": 24,
+        "mined_release_record": 1
+      }
+    },
+    "apple_ios": {
+      "bugs": {
+        "mined_reddit_title": 40,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 67,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 88,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 15,
+        "mined_release_record": 0
+      },
+      "security": {
+        "mined_reddit_title": 4,
+        "mined_release_record": 27
+      }
+    },
+    "apple_macos": {
+      "bugs": {
+        "mined_reddit_title": 190,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 44,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 406,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 21,
+        "mined_release_record": 0
+      },
+      "security": {
+        "mined_reddit_title": 15,
+        "mined_release_record": 21
+      }
+    },
+    "arch": {
+      "bugs": {
+        "mined_reddit_title": 5,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 3,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 15,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 6,
+        "mined_release_record": 23
+      },
+      "security": {
+        "mined_reddit_title": 0,
+        "mined_release_record": 0
+      }
+    },
+    "cargo_rust": {
+      "bugs": {
+        "mined_reddit_title": 6,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 12,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 18,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 6,
+        "mined_release_record": 258
+      },
+      "security": {
+        "mined_reddit_title": 1,
+        "mined_release_record": 0
+      }
+    },
+    "chrome": {
+      "bugs": {
+        "mined_reddit_title": 191,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 45,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 346,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 28,
+        "mined_release_record": 1109
+      },
+      "security": {
+        "mined_reddit_title": 15,
+        "mined_release_record": 0
+      }
+    },
+    "debian": {
+      "bugs": {
+        "mined_reddit_title": 48,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 86,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 85,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 12,
+        "mined_release_record": 4
+      },
+      "security": {
+        "mined_reddit_title": 6,
+        "mined_release_record": 0
+      }
+    },
+    "devtools": {
+      "bugs": {
+        "mined_reddit_title": 80,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 80,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 138,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 20,
+        "mined_release_record": 309
+      },
+      "security": {
+        "mined_reddit_title": 6,
+        "mined_release_record": 1
+      }
+    },
+    "docker": {
+      "bugs": {
+        "mined_reddit_title": 11,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 19,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 46,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 2,
+        "mined_release_record": 0
+      },
+      "security": {
+        "mined_reddit_title": 4,
+        "mined_release_record": 5
+      }
+    },
+    "fedora": {
+      "bugs": {
+        "mined_reddit_title": 148,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 127,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 228,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 23,
+        "mined_release_record": 18
+      },
+      "security": {
+        "mined_reddit_title": 9,
+        "mined_release_record": 0
+      }
+    },
+    "firefox": {
+      "bugs": {
+        "mined_reddit_title": 54,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 25,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 89,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 25,
+        "mined_release_record": 164
+      },
+      "security": {
+        "mined_reddit_title": 3,
+        "mined_release_record": 1
+      }
+    },
+    "homeassistant": {
+      "bugs": {
+        "mined_reddit_title": 49,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 173,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 301,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 18,
+        "mined_release_record": 0
+      },
+      "security": {
+        "mined_reddit_title": 5,
+        "mined_release_record": 2
+      }
+    },
+    "kubernetes": {
+      "bugs": {
+        "mined_reddit_title": 16,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 24,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 60,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 2,
+        "mined_release_record": 164
+      },
+      "security": {
+        "mined_reddit_title": 3,
+        "mined_release_record": 3
+      }
+    },
+    "linux_kernel": {
+      "bugs": {
+        "mined_reddit_title": 84,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 220,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 235,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 12,
+        "mined_release_record": 180
+      },
+      "security": {
+        "mined_reddit_title": 16,
+        "mined_release_record": 3
+      }
+    },
+    "llm_ai": {
+      "bugs": {
+        "mined_reddit_title": 79,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 151,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 318,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 28,
+        "mined_release_record": 109
+      },
+      "security": {
+        "mined_reddit_title": 4,
+        "mined_release_record": 2
+      }
+    },
+    "mysql": {
+      "bugs": {
+        "mined_reddit_title": 11,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 29,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 43,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 3,
+        "mined_release_record": 0
+      },
+      "security": {
+        "mined_reddit_title": 1,
+        "mined_release_record": 2
+      }
+    },
+    "nas_selfhosted": {
+      "bugs": {
+        "mined_reddit_title": 44,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 160,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 303,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 9,
+        "mined_release_record": 178
+      },
+      "security": {
+        "mined_reddit_title": 8,
+        "mined_release_record": 2
+      }
+    },
+    "nosql": {
+      "bugs": {
+        "mined_reddit_title": 11,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 21,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 35,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 5,
+        "mined_release_record": 267
+      },
+      "security": {
+        "mined_reddit_title": 1,
+        "mined_release_record": 0
+      }
+    },
+    "npm_node": {
+      "bugs": {
+        "mined_reddit_title": 34,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 36,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 84,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 7,
+        "mined_release_record": 422
+      },
+      "security": {
+        "mined_reddit_title": 5,
+        "mined_release_record": 3
+      }
+    },
+    "pip_python": {
+      "bugs": {
+        "mined_reddit_title": 15,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 45,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 51,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 7,
+        "mined_release_record": 286
+      },
+      "security": {
+        "mined_reddit_title": 3,
+        "mined_release_record": 2
+      }
+    },
+    "postgres": {
+      "bugs": {
+        "mined_reddit_title": 7,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 14,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 18,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 3,
+        "mined_release_record": 135
+      },
+      "security": {
+        "mined_reddit_title": 1,
+        "mined_release_record": 0
+      }
+    },
+    "ubuntu": {
+      "bugs": {
+        "mined_reddit_title": 136,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 109,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 225,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 28,
+        "mined_release_record": 21
+      },
+      "security": {
+        "mined_reddit_title": 7,
+        "mined_release_record": 0
+      }
+    },
+    "windows": {
+      "bugs": {
+        "mined_reddit_title": 92,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 74,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 194,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 39,
+        "mined_release_record": 0
+      },
+      "security": {
+        "mined_reddit_title": 8,
+        "mined_release_record": 5
+      }
+    },
+    "wordpress": {
+      "bugs": {
+        "mined_reddit_title": 75,
+        "mined_release_record": 0
+      },
+      "community": {
+        "mined_reddit_title": 189,
+        "mined_release_record": 0
+      },
+      "general": {
+        "mined_reddit_title": 207,
+        "mined_release_record": 0
+      },
+      "releases": {
+        "mined_reddit_title": 24,
+        "mined_release_record": 0
+      },
+      "security": {
+        "mined_reddit_title": 49,
+        "mined_release_record": 194
+      }
+    }
+  },
+  "reddit_posts_seen": 9923,
+  "scorable": 51,
+  "scorable_by_source": {
+    "mined_release_record": 51
+  },
+  "seed": 20260830,
+  "sources": {
+    "mined_reddit_title": 249,
+    "mined_release_record": 51
+  },
+  "total": 300,
+  "vendors": {
+    "Android": 13,
+    "Apple iOS": 13,
+    "Apple macOS": 13,
+    "Arch Linux": 13,
+    "Debian": 13,
+    "Docker": 13,
+    "Editors / dev tooling": 12,
+    "Fedora / RHEL": 13,
+    "Google Chrome": 13,
+    "Home Assistant / smart home": 12,
+    "Kubernetes": 12,
+    "LLM / AI models": 12,
+    "Linux kernel / distros": 13,
+    "Microsoft Windows": 13,
+    "MongoDB / Redis / search": 12,
+    "Mozilla Firefox": 13,
+    "MySQL / SQL": 12,
+    "NAS / self-hosted": 12,
+    "PostgreSQL": 12,
+    "Ubuntu": 13,
+    "WordPress": 12,
+    "cargo / Rust": 12,
+    "npm / Node.js": 12,
+    "pip / Python": 12
+  },
+  "version_records_seen": 7736
+}
