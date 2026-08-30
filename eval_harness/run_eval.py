@@ -22,9 +22,11 @@ Outputs a timestamped folder under results/<run_id>/ containing:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
+import re
 import time
 from typing import Dict, List
 
@@ -39,14 +41,36 @@ from . import report as report_mod
 
 QRELS_CACHE = "qrels_cache.json"
 
+# A cache entry must be keyed by the QUESTION, not by its position in a file.
+# Keying on rec["id"] silently mixed datasets: benchmark_300 ids run 1..300 and
+# validation_gt ids run 1..10, both pool documents from the same live APIs, so
+# the label judged for validation question 3 was reused for benchmark question
+# 3 — a different question about a different product. Hashing the query text
+# makes the key dataset-independent, and legitimately shares a label when two
+# datasets happen to ask the same question about the same document.
+_KEY_RE = re.compile(r"^[0-9a-f]{12}:[0-9a-f]{12}$")
+
+
+def qrels_key(query: str, doc_id: str) -> str:
+    """Cache key for one (question, document) relevance judgment."""
+    qh = hashlib.sha1(query.strip().lower().encode("utf-8", "ignore")).hexdigest()[:12]
+    return f"{qh}:{doc_id}"
+
 
 def _load_qrels_cache(results_dir: str) -> dict:
     p = os.path.join(results_dir, QRELS_CACHE)
     if os.path.exists(p):
         try:
-            return json.load(open(p))
+            raw = json.load(open(p))
         except Exception:
             return {}
+        cache = {k: v for k, v in raw.items() if _KEY_RE.match(k)}
+        dropped = len(raw) - len(cache)
+        if dropped:
+            print(f"[harness] qrels cache: dropped {dropped} entries keyed by "
+                  f"dataset position (ambiguous across datasets); they will be "
+                  f"re-judged and re-cached by question")
+        return cache
     return {}
 
 
@@ -113,7 +137,7 @@ def run(cfg: EvalConfig) -> str:
         qrels: Dict[str, int] = {}
         if judging:
             for did, d in pool.items():
-                ck = f"{rec['id']}:{did}"
+                ck = qrels_key(query, did)
                 if ck in qrels_cache:
                     qrels[did] = qrels_cache[ck]
                 else:
