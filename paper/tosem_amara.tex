@@ -74,9 +74,10 @@ relevant documents the baseline found were never fetched by the multi-agent
 pipeline at all. Three successively stronger rerankers raised mean reciprocal
 rank from 0.250 to 0.625 while leaving nDCG@3 near 0.19, because reranking
 cannot promote a document that was never retrieved. Issuing both the original
-and the rewritten phrasing and unioning the candidate pools raises nDCG@3 to
-0.973 in one step, and on a 100-question benchmark spanning 24 software
-ecosystems it reduces the fetch-time loss from 96\% to 14.7\%.
+and the rewritten phrasing and unioning the candidate pools raises nDCG@3 from
+0.188 to 0.765 in one step, and on a 100-question benchmark spanning 21 software
+ecosystems it reduces the share of the baseline's relevant documents missing
+from the candidate pool from 96\% to 12\%.
 
 We draw four conclusions for practitioners building agentic software
 engineering tools. First, query rewriting must augment retrieval rather than
@@ -86,11 +87,11 @@ ordering that standard IR metrics produce, so architectural claims resting on
 one are not safe. Third, an apparent 0.23 faithfulness deficit for the
 multi-agent system proved to be an artifact of answer \emph{format} --- a
 structured template judged against fluent prose --- and vanished when the same
-retrieval was synthesized through the baseline's own prompt (0.924 versus
-0.929). Fourth, and least comfortable: with both defects repaired and the
+retrieval was synthesized through the baseline's own prompt (0.926 versus
+0.931). Fourth, and least comfortable: with both defects repaired and the
 synthesis model held constant, the multi-agent pipeline \emph{matches} rather
-than beats the single-agent baseline on retrieval (nDCG@3 0.865 versus 0.869,
-$n=96$) at roughly twice the latency, so decomposition per se is not what
+than beats the single-agent baseline on retrieval (nDCG@3 0.859 versus 0.863,
+$n=100$) at roughly twice the latency, so decomposition per se is not what
 produced the original result. We release the architecture, the evaluation
 harness, and a 300-question benchmark mined from live release, advisory, and
 community sources.
@@ -154,7 +155,7 @@ raised MRR monotonically from 0.250 to 0.500 to 0.625, while nDCG@3 stayed near
 0.19. A ranking fix that cannot close a ranking gap is evidence that the
 documents are not there to be ranked. Searching both the original and the
 rewritten phrasing and unioning the candidate pools moves nDCG@3 from 0.188 to
-0.973 in a single change.
+0.765 in a single change.
 
 \subsection{Contributions}
 
@@ -713,9 +714,10 @@ The Query Rewriter is prompted for a retrieval-oriented restatement of
 at most 20 words directed at bug fixes, releases, changelogs, security
 patches, and performance. It therefore introduces terms frequent in the
 collection and absent from the question, and drops terms rare in the
-collection and decisive in the question. Both effects raise recall and
-lower the precision of any ordering computed from the rewrite, so we
-adopt a single design rule and apply it throughout the Retriever:
+collection and decisive in the question. We expected both effects to raise
+recall while lowering the precision of any ordering computed from the rewrite,
+and on that expectation we adopt a single design rule and apply it throughout
+the Retriever:
 
 \begin{quote}
 \emph{The rewritten query determines what is fetched. The original
@@ -1088,14 +1090,14 @@ within-panel~(b) contrast is not.}
 Ranking function & Scored against & nDCG@3 & MRR & Recall@5 \\
 \midrule
 \multicolumn{5}{l}{\emph{(a) Single-phrasing retrieval: the rewritten query only}} \\
-Substring boost & original question & 0.145 & 0.250 & 0.145 \\
-Okapi BM25      & original question & 0.212 & 0.500 & 0.203 \\
+Substring boost & original question & 0.145 & 0.250 & 0.200 \\
+Okapi BM25      & original question & 0.212 & 0.500 & 0.343 \\
 Embedding cosine & original question & 0.188 & 0.625 & 0.327 \\
 \midrule
 \multicolumn{5}{l}{\emph{(b) Union retrieval: both phrasings issued, pools merged}} \\
 Substring boost & rewritten query  & 0.597 & 0.650 & 0.650 \\
 Substring boost & original question & 0.621 & 0.667 & 0.611 \\
-Embedding cosine & original question & \textbf{0.973} & \textbf{1.000} & \textbf{0.933} \\
+Embedding cosine & original question & \textbf{0.765} & \textbf{1.000} & 0.165 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1139,7 +1141,7 @@ what Table~\ref{tab:ranking-ablation} shows.
 
 The remedy follows directly and is stated in Section~\ref{sec:union-fetch}: issue
 both phrasings and union the candidate pools. The final row of
-Table~\ref{tab:ranking-ablation} gives its effect --- nDCG@3 from 0.188 to 0.973
+Table~\ref{tab:ranking-ablation} gives its effect --- nDCG@3 from 0.188 to 0.765
 in a single change, with no modification to ranking, generation, or the
 evaluator. Notably, the multi-agent pipeline had all along been retrieving
 relevant documents the baseline missed; its candidate set was not worse so much
@@ -1152,8 +1154,8 @@ The preceding measurements use ten ground-truth questions and are diagnostic
 rather than conclusive. To test whether the repaired pipeline holds up, we
 evaluated on a 100-question stratified subset of the 300-question benchmark
 (Section~\ref{sec:method}), balanced across all five question categories at 20
-each and covering 21 of the 24 software ecosystems. Ninety-six questions
-completed across all three systems and are reported here.
+each and covering 21 of the 24 software ecosystems. All 100 questions completed
+across all three systems.
 
 Three systems were run with the synthesis model held constant at Llama 3.1 8B,
 which isolates architecture from model:
@@ -1170,17 +1172,16 @@ which isolates architecture from model:
 
 \begin{table}[t]
 \caption{Retrieval quality on the 100-question stratified benchmark subset
-($n=96$), pooled graded relevance, judge \texttt{llama3.1}. Brackets give
-bootstrap 95\% confidence intervals. The two retrieval arms are identical by
-construction; they differ only in answer synthesis.}
+($n=100$), pooled graded relevance, judge \texttt{llama3.1}. The two retrieval
+arms are identical by construction; they differ only in answer synthesis.}
 \label{tab:scaled-retrieval}
 \begin{tabular}{lrrrr}
 \toprule
 System & nDCG@3 & nDCG@5 & MRR & Recall@5 \\
 \midrule
-marag         & 0.865 [0.80, 0.92] & 0.867 [0.81, 0.92] & 0.892 [0.83, 0.95] & 0.866 [0.80, 0.92] \\
-marag\_llm    & 0.865 [0.80, 0.92] & 0.867 [0.81, 0.92] & 0.892 [0.83, 0.95] & 0.866 [0.80, 0.92] \\
-single\_agent & 0.869 [0.81, 0.92] & 0.876 [0.82, 0.93] & 0.895 [0.83, 0.95] & 0.875 [0.82, 0.93] \\
+marag         & 0.859 & 0.861 & 0.885 & 0.860 \\
+marag\_llm    & 0.859 & 0.861 & 0.885 & 0.860 \\
+single\_agent & 0.863 & 0.870 & 0.888 & 0.868 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1188,13 +1189,16 @@ single\_agent & 0.869 [0.81, 0.92] & 0.876 [0.82, 0.93] & 0.895 [0.83, 0.95] & 0
 Table~\ref{tab:scaled-retrieval} reports retrieval quality. The repaired
 multi-agent pipeline and the single-agent baseline are indistinguishable: every
 difference is well within overlapping confidence intervals, and the baseline is
-nominally ahead on all four metrics. The fetch-time diagnostic of
-Section~\ref{sec:localizing}, recomputed on this larger set, falls from 96\% (22
-of 23) to \textbf{14.7\%} (23 of 156): the union remedy holds at scale, and the
-residual is the ordinary variation of two systems retrieving from live sources.
+nominally ahead on all four metrics. The fetch-time diagnostic of Section~\ref{sec:localizing} --- the share of the
+baseline's relevant documents absent from the multi-agent \emph{candidate pool}
+--- stands at 22 of 23 on the ten ground-truth questions and at \textbf{19 of
+158 (12.0\%)} here. The two figures come from different question sets rather
+than from recomputing one on the other, but they are the same measurement, and
+the union remedy holds at this scale; the residual is the ordinary variation of
+two systems retrieving from live sources.
 
 \begin{table}[t]
-\caption{Answer quality and cost ($n=96$), LLM-judged. \texttt{marag} and
+\caption{Answer quality and cost ($n=100$), LLM-judged. \texttt{marag} and
 \texttt{marag\_llm} share a retrieval pipeline and differ only in how the answer
 is produced. Latency is the per-question median in seconds.}
 \label{tab:scaled-answer}
@@ -1202,19 +1206,19 @@ is produced. Latency is the per-question median in seconds.}
 \toprule
 System & Faithfulness & Answer relevance & Latency (s) \\
 \midrule
-marag (template answer) & 0.702 & 0.977 & 19.6 \\
-marag\_llm (prose answer) & 0.924 & 0.952 & 21.1 \\
-single\_agent & 0.929 & 0.973 & 9.5 \\
+marag (template answer) & 0.700 & 0.978 & 19.7 \\
+marag\_llm (prose answer) & 0.926 & 0.953 & 21.2 \\
+single\_agent & 0.931 & 0.973 & 9.6 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 Table~\ref{tab:scaled-answer} carries a methodological result worth stating
 separately. Comparing \texttt{marag} against \texttt{single\_agent} on
-faithfulness suggests a substantial deficit (0.702 versus 0.929). Comparing
+faithfulness suggests a substantial deficit (0.700 versus 0.931). Comparing
 \texttt{marag\_llm} against \texttt{single\_agent} --- the same retrieval, the
 same documents, differing only in whether the answer is a structured template or
-model prose --- gives 0.924 versus 0.929. The apparent deficit was almost
+model prose --- gives 0.926 versus 0.931. The apparent deficit was almost
 entirely an artifact of answer \emph{format}: an LLM judge scoring a structured
 template against fluent prose is partly scoring fluency. Any evaluation
 comparing an agentic system that emits structured output against a baseline that
@@ -1222,7 +1226,7 @@ emits prose is exposed to this, and we would not have detected it without an arm
 constructed specifically to remove it.
 
 On cost, the multi-agent pipeline takes approximately twice the median
-per-question latency of the baseline (19.6\,s versus 9.5\,s). This reflects the
+per-question latency of the baseline (19.7\,s versus 9.6\,s). This reflects the
 rewriter's generation call, the evaluator pass, and the additional retrieval
 calls the union incurs.
 
@@ -1241,7 +1245,7 @@ calls the union incurs.
   \item Issuing both the original and rewritten phrasings and unioning the
   candidate pools removes the deficit, and the remedy holds on a
   100-question multi-ecosystem benchmark, where the fetch-time loss falls from
-  96\% to 14.7\%.
+  96\% to 12\%.
   \item With both defects repaired and the synthesis model held constant, the
   multi-agent architecture \emph{matches} the single-agent baseline on retrieval
   and on faithfulness, at roughly twice the latency
@@ -1446,8 +1450,12 @@ same behavior following the update.''\\[2pt]
 \end{tikzpicture}%
 }
 \caption{
-Illustrative comparison of single-agent and multi-agent RAG
-architectures on a software update question.
+Illustrative execution traces on one software update question, recorded
+\emph{before} the substitution defect of Section~\ref{sec:localizing} was
+identified and repaired. The difference shown is a property of that defect and
+of these particular traces, not an architecture effect:
+Section~\ref{sec:scaled-eval} reports the two systems as statistically
+indistinguishable once it is fixed.
 }
 \label{fig:siri_example}
 \end{figure*}
@@ -1497,7 +1505,7 @@ reported here is not established.
 
 A paired $t$-test comparing the first and last tertiles yielded
 $t(16)=2.18$ and $p=0.043$ (two-tailed). The corresponding effect size
-was Cohen's $d=0.83$ \cite{cohen1960coefficient}.
+was Cohen's $d=0.83$ \cite{cohen1988power}.
 
 During evaluation, 27 query-expansion terms accumulated positive scores
 in the Self-Improvement Memory. Table~\ref{tab:learned_terms} lists the
@@ -1694,7 +1702,7 @@ pipelines generally rather than of this system:
 The last point suggests a diagnostic worth generalizing. When an intervention
 improves the metric it targets while leaving the outcome metric unchanged, the
 intervention is likely addressing a real but secondary defect. In retrieval
-specifically, MRR improving while nDCG@$k$ and Recall@$k$ stay flat is the
+specifically, MRR improving while nDCG@$k$ stays flat is the
 signature of a candidate set that does not contain the answer, and it is
 distinguishable from a ranking problem only by inspecting the candidate set
 directly. We therefore instrumented the pipeline to expose its pre-rerank pool,
@@ -1705,8 +1713,9 @@ separable diagnoses rather than a single unexplained score.
 \label{sec:decomposition}
 
 With both defects repaired and the synthesis model held constant, the
-multi-agent architecture matches the single-agent baseline on retrieval quality
-and on faithfulness, at approximately twice the latency
+multi-agent architecture matches the single-agent baseline on retrieval quality,
+and --- once answer format is matched, in the \texttt{marag\_llm} arm --- on
+faithfulness, at approximately twice the latency
 (Section~\ref{sec:scaled-eval}). We report this as the result rather than
 searching for a configuration that reverses it.
 
@@ -1815,8 +1824,10 @@ symptom descriptions, community terminology, and information dispersed
 across multiple document sources. Consequently, retrieval quality
 becomes a central factor influencing answer quality.
 
-The results indicate that improvements in retrieval quality translate
-directly into improved answer supportability. When relevant release
+We expect improvements in retrieval quality to translate into improved answer
+supportability, though our evaluation does not test it: Section~\ref{sec:scaled-eval}
+finds retrieval parity coexisting with an apparent faithfulness gap that proved
+to be an artifact of answer format. When relevant release
 notes, advisories, and community discussions are successfully
 retrieved, the generated answer is more likely to contain verifiable
 evidence and less likely to rely on unsupported assumptions. This
@@ -1940,7 +1951,7 @@ synthesis process as the proposed system, isolating the effect of
 architectural decomposition, adaptive feedback, and persistent memory.
 Implementation details such as alias coverage, endpoint freshness,
 query rewriting quality, and retrieval configuration may still
-influence measured improvements.
+influence the measured comparison.
 
 \textbf{External validity.}
 The evaluation focuses on English-language software update questions
@@ -1973,9 +1984,9 @@ embedding-based vendor matching, and adaptive threshold selection \cite{asai2024
 
 Additional studies should examine retrieval adaptation across longer
 interaction histories and larger workloads to better understand the
-stability of the observed retrieval improvements. Evaluations involving
-multiple software ecosystems would also help determine whether the
-observed benefits generalize beyond the current data sources \cite{reuter2025}.
+stability of the observed retrieval-level adaptation. Evaluations involving
+multiple software ecosystems would also help determine whether retrieval parity
+holds beyond the current data sources \cite{reuter2025}.
 
 Finally, future work should investigate stronger validation mechanisms
 for community-derived information, including agreement analysis across
@@ -2003,9 +2014,8 @@ can promote a document that was never a candidate.
 
 Issuing both phrasings and unioning the candidate pools resolves it. On a
 100-question benchmark spanning 24 software ecosystems, the fetch-time loss
-falls from 96\% to 14.7\%, and the repaired pipeline reaches nDCG@3 of 0.865
-against the baseline's 0.869 --- parity, within overlapping confidence
-intervals, at approximately twice the latency. We report this rather than the
+falls from 96\% to 12\%, and the repaired pipeline reaches nDCG@3 of 0.859
+against the baseline's 0.863 --- parity, at approximately twice the latency. We report this rather than the
 improvement our original metric showed. On this benchmark, in this domain,
 architectural decomposition did not improve retrieval quality over a
 well-configured single-agent baseline; what the original evaluation measured was
@@ -2165,6 +2175,11 @@ Y. Zheng et al., ``SkillRouter: Skill Routing for LLM Agents at Scale
 
 \bibitem{zhuge2024}
 M. Zhuge et al., ``Agent-as-a-Judge: Evaluate Agents with Agents,'' \textit{arXiv preprint https://arxiv.org/abs/2410.10934}, 2024.
+
+\bibitem{cohen1988power}
+J. Cohen,
+\textit{Statistical Power Analysis for the Behavioral Sciences}, 2nd ed.,
+Lawrence Erlbaum Associates, 1988.
 
 \bibitem{cohen1960coefficient}
 J. Cohen,
