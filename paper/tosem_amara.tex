@@ -8,6 +8,8 @@
 %% acmart already loads booktabs, graphicx, pifont and hyperref; re-loading them
 %% risks an option clash and counts as modifying the template.
 \usepackage{amsmath}
+\usepackage{array}
+\newcolumntype{R}[1]{>{\raggedright\arraybackslash}p{#1}}
 \usepackage{tikz}
 \usepackage{pifont}   %% acmart's own pifont load is conditional; \ding needs this
 
@@ -1886,10 +1888,14 @@ partially relevant answers, and incorrect answers.
 \label{tab:examples}
 \setlength{\tabcolsep}{3pt}
 \renewcommand{\arraystretch}{1.1}
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{p{3.8cm}p{1.45cm}p{4.4cm}p{2.7cm}p{0.7cm}}
+%% Proportional widths rather than \resizebox: scaling a tabular changes the
+%% type size non-uniformly, which ACM discourages, and it cannot fix an overflow
+%% inside a p-column in any case.
+%% Ragged-right in the narrow columns: justified p-columns cannot break a long
+%% token such as a vendor slug, and overflow into the margin instead.
+\begin{tabular}{@{}R{0.245\textwidth}R{0.125\textwidth}R{0.295\textwidth}R{0.175\textwidth}R{0.05\textwidth}@{}}
 \toprule
-\textbf{Question} & \textbf{Vendor} & \textbf{Multi-Agent Answer} & \textbf{Evaluator Note} & \textbf{Result} \\
+\textbf{Question} & \textbf{Vendor} & \textbf{Multi-Agent Answer} & \textbf{Evaluator Note} & \textbf{Res.} \\
 \midrule
 \multicolumn{5}{l}{\textit{(A) Correctly Answered}} \\
 \midrule
@@ -1914,7 +1920,7 @@ Q3: G6 Bullet unstable?
 \multicolumn{5}{l}{\textit{(B) Partially Relevant}} \\
 \midrule
 Q4: Would an IKEA hub update devices more reliably?
-   & homeassistant
+   & home\-assistant
    & Home Assistant integration information retrieved.
    & Sub-vendor not represented in registry.
    & \textcolor{orange!80!black}{\textbf{$\sim$}} \\
@@ -1952,7 +1958,6 @@ Q9: What small IT task always turns into a nightmare?
    & \textcolor{red!70!black}{\textbf{\ding{55}}} \\
 \bottomrule
 \end{tabular}
-}
 \end{table*}
 
 \subsection{Failure Analysis}
