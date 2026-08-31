@@ -402,6 +402,12 @@ def run(cfg: EvalConfig) -> str:
                 "pool_size": len(pool_ids),
                 "pool_doc_ids": pool_ids,
                 "pool_recall": pool_recall,
+                # Critique-loop trace, set only by the self-reflective arm.
+                # Persisted because that arm's ISREL step *discards* candidates,
+                # and the same model later judges relevance for scoring -- so the
+                # count of documents the critic removed is what makes the
+                # resulting metric inflation measurable rather than hypothetical.
+                "critique_trace": out.get("trace"),
                 "rerank_spec": out.get("rerank_spec", ""),
                 "rerank_degraded": out.get("rerank_degraded", False),
                 "latency_s": out["latency_s"],

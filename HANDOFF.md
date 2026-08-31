@@ -4,7 +4,7 @@ Working notes for picking this up in a fresh session. Findings and their
 evidence live in [`eval_harness/FINDINGS.md`](eval_harness/FINDINGS.md); this
 file is only *where things stand and what to do next*.
 
-Last updated: 2026-08-30. Branch: `feat/llm-source-full`.
+Last updated: 2026-08-31. Branch: `feat/llm-source-full`.
 
 ---
 
@@ -25,7 +25,7 @@ no sudo, unlike the BasicTeX cask). Build with:
 tectonic -X compile paper/tosem_amara.tex
 ```
 
-Current output: **33 pages** of the 45 permitted, zero undefined references or
+Current output: **34 pages** of the 45 permitted, zero undefined references or
 citations, two sub-visible overfull boxes (6pt and 11pt). Build products are
 gitignored.
 
@@ -47,17 +47,21 @@ splice them twice.
 
 ### Before submitting
 
-1. **Compile it.** Never typeset. Expect the usual first-compile fixes.
+1. **Read the typeset PDF.** It compiles; nobody has read the output
+   front-to-back. After this much surgery the real risk is that it reads as a
+   repaired conference paper rather than one argument.
 2. **Voice.** §4's older subsections (Answer Accuracy, Representative Questions,
    Failure Analysis, Implementation Comparison, Qualitative Analysis) are
    conference-version prose. They no longer contradict anything, but they read
    unevenly against the rewritten sections.
 3. **Journal-first eligibility.** Confirm the AgenticSE '26 workshop proceedings
    status satisfies TOSEM's journal-first rules.
-4. **No head-to-head baseline was run.** §2 defends the omission (Self-RAG needs
-   a static Contriever/Wikipedia index; CRAG needs a fine-tuned T5-large
-   evaluator plus per-dataset thresholds). A reviewer may still press. RAGLAB
-   ships `selfrag_llama3-8B` and would be the cheapest way to answer it.
+4. **No head-to-head baseline results.** §2 defends the omission and now also
+   states that a reimplementation of the mechanisms ships with the harness with
+   no results reported. A reviewer may still press. Finishing that run (command
+   below) is the cheapest answer; RAGLAB's `selfrag_llama3-8B` would be the
+   stronger one but needs ~60 GB RAM for its ColBERT server against this
+   machine's 24 GB.
 
 ### Numbers currently in the paper
 
@@ -66,17 +70,21 @@ splice them twice.
 | Bespoke retrieval score | 0.680 → 0.798 (+17.2%, *p*=0.020) | conference version, n=50 |
 | Standard IR metrics, same systems | marag nDCG@3 0.145 vs baseline 0.765 | n=10 |
 | Fetch-time loss, before fix | 22 of 23 relevant documents never retrieved | n=10 |
-| Ranking ablation | none 0.145 / bm25 0.212 / embed 0.188 | n=10 |
-| Union fetch | nDCG@3 0.973, MRR 1.000 | n=10 |
-| Scaled evaluation | marag 0.865 [0.80,0.92] vs baseline 0.869 [0.81,0.92] | n=96 |
-| Fetch-time loss, after fix | 14.7% (23 of 156) | n=96 |
-| Faithfulness, format confound | template 0.702, prose 0.924, baseline 0.929 | n=96 |
-| Latency | 19.6 s vs 9.5 s median | n=96 |
+| Ranking ablation, single-phrasing | none 0.145 / bm25 0.212 / embed 0.188 | n=10 |
+| Union fetch | nDCG@3 **0.765** (post-keyfix), MRR 1.000 | n=10 |
+| Union, rank on rewrite vs original | 0.597 vs 0.621 — not established | n=10, n=9 |
+| Scaled evaluation | marag 0.859 vs baseline 0.863 | n=100 |
+| Fetch-time loss, after fix | 19 of 158 (12.0%), pool-based | n=100 |
+| Faithfulness, format confound | template 0.700, prose 0.926, baseline 0.931 | n=100 |
+| Second sample (reverses nominal order) | marag 0.781 vs baseline 0.768 | n=100, 28 GT |
+| Correctness | 0.296 / 0.367 / 0.326 — all wrong more often than right | n=24–27 |
 
-The n=96 numbers come from `results/run_1788139377_6a8e9993db65`. That run
-stopped at question 98 of 100 without writing `report.md`; the aggregates were
-computed directly from `per_query.jsonl`. `--resume` on that run id would
-finish it and produce the official artifact.
+Every row maps to a run id in [`results/PROVENANCE.md`](results/PROVENANCE.md),
+which also marks which runs predate the qrels-cache key fix.
+
+Two numbers that were wrong earlier and are worth not reintroducing: **0.973**
+was a pre-keyfix artifact (post-fix, reproducibly, 0.765), and the scaled tables
+were once reported at n=96 from a stalled run that has since completed at n=100.
 
 **Caveat carried in the paper:** the 9.3% self-improvement figure compares
 time-ordered tertiles against a live corpus that drifts during a run, so
@@ -101,7 +109,7 @@ The harness itself needs only `requests` plus the stdlib — LangChain,
 smolagents, FAISS and ChromaDB in `requirements.txt` belong to the Streamlit
 app and the alternative implementations, not to `eval_harness/`.
 
-Sanity check: `./venv311/bin/python -m pytest tests/ -q` → **267 passing**,
+Sanity check: `./venv311/bin/python -m pytest tests/ -q` → **399 passing**,
 offline, no network.
 
 ---
@@ -126,16 +134,55 @@ Effect on the 10-question ground-truth set (`validation_gt.json`):
 
 | Configuration | marag nDCG@3 | marag MRR |
 |---|---:|---:|
-| published | 0.145 | 0.250 |
-| `bm25` | 0.212 | 0.500 |
-| `embed` | 0.188 | 0.625 |
-| `embed` + union fetch | **0.973** | **1.000** |
+| substring boost, single-phrasing | 0.145 | 0.250 |
+| `bm25`, single-phrasing | 0.212 | 0.500 |
+| `embed`, single-phrasing | 0.188 | 0.625 |
+| `embed` + union fetch | **0.765** | **1.000** |
 
-This reaches **parity** with the single-agent baseline (0.988), not
-superiority, at roughly 2× latency. The multi-agent justification is therefore
+Note which change is the lever. Once both phrasings are retrieved, even the
+original substring boost reaches 0.597; ranking against the original question
+rather than the rewrite adds 0.024 on top (0.621 vs 0.597), which is not
+established at this sample size. The reranking work came first and matters least
+— adopt the union first.
+
+This reaches **parity** with the single-agent baseline, not superiority, at
+roughly 2× latency. The multi-agent justification is therefore
 still unproven — that is the open research question, not a code problem.
 
-### In flight
+### Stopped deliberately (2026-08-31)
+
+Work was halted here to finalize the paper. Three things are complete as code but
+have no results in the paper, by choice:
+
+- **The self-reflective baseline arm** (`eval_harness/selfreflective.py`,
+  `--generators selfreflective`). A reimplementation of Self-RAG's per-passage
+  critiques and CRAG's corrective flow over our retrieval, model held constant.
+  43 tests. Its evaluation run was stopped at 8 of 100 questions; no results are
+  reported, and Section 2 says so explicitly rather than leaving the arm
+  unmentioned. To finish it:
+  `MARAG_RERANK=embed python -m eval_harness.run_eval --dataset data/benchmark_100.json --generators selfreflective,single_agent:ollama:llama3.1,marag:ollama:llama3.1 --judge ollama:llama3.1`
+  (~85 min at ~52 s/question for three arms). Per-query rows carry
+  `critique_trace`, so `n_retrieved - n_relevant` gives the count of documents
+  the critic discarded.
+- **Two ISREL bugs, both fixed**, both found by a peer session reading the code
+  against its own comments: the relevance critique failed *closed* on a
+  malformed reply, and a negated rejection ("not irrelevant") was read as a
+  rejection. Both sat on the side that narrows the candidate set toward the
+  critic's preferences, which is the circularity the threats section discusses.
+  The bound the paper needs — a document is discarded only when the critique
+  asserts IRRELEVANT as a non-negated word — now holds, pinned by 28 tests.
+- **Three sessions worked this repo concurrently.** By Claude-Session trailer:
+  `0186v` (paper's scaled tables, the self-reflective arm, this file,
+  PROVENANCE.md, compile plumbing), `01SCr` (inversion statistics,
+  judge-independence threat, judge bibitems), `01T8t` (`scripts/phase_*.sh` --
+  the top_k sweep, phase ablation, qwen check, frozen-corpus control). If a
+  change looks like it appeared from nowhere, check `git log` before assuming a
+  bug. Note that `phase_ablation.sh` and a queued resume share an identical
+  `--generators marag,single_agent --judge-pool` signature, so a pattern-based
+  process gate cannot tell them apart -- only the corpus directory or parent pid
+  can.
+
+### Previously in flight
 
 **The 300-question run is incomplete.** It died at question **68 of 300**.
 `--resume` exists for this. To continue:

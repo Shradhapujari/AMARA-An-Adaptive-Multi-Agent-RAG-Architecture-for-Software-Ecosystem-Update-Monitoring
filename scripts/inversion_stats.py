@@ -36,7 +36,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # The run behind Table~\ref{tab:inversion}: substring-boost ranking, rewritten
 # phrasing only, the configuration the conference version shipped.
-DEFAULT_RUN = os.path.join(ROOT, "results", "run_1788128243_237950e265eb")
+#
+# results/ is gitignored, so a fresh clone has no run directories. The same rows
+# ship under eval_harness/sample_results/paper_runs/ and are used as a fallback,
+# which is what lets a reader re-derive these statistics from the repository
+# alone rather than only on the machine that produced the run.
+RUN_OF_RECORD = "run_1788128243_237950e265eb"
+SEARCH = (
+    os.path.join(ROOT, "results"),
+    os.path.join(ROOT, "eval_harness", "sample_results", "paper_runs"),
+)
+
+
+def default_run() -> str:
+    for base in SEARCH:
+        cand = os.path.join(base, RUN_OF_RECORD)
+        if os.path.exists(os.path.join(cand, "per_query.jsonl")):
+            return cand
+    return os.path.join(SEARCH[0], RUN_OF_RECORD)
+
+
+DEFAULT_RUN = default_run()
 
 METRICS = ["ndcg@1", "ndcg@3", "ndcg@5", "mrr", "recall@5"]
 BOOTSTRAP_RESAMPLES = 100_000

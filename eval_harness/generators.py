@@ -261,6 +261,53 @@ class RawLLMGenerator(Generator):
         return {"answer": answer, "docs": [], "self_quality": None, "pool": []}
 
 
+
+class SelfReflectiveGenerator(Generator):
+    """Self-RAG / CRAG-style critique loop over this project's retrieval.
+
+    A reimplementation of the published *mechanisms*, not the published systems:
+    neither Self-RAG's reflection-token checkpoint nor CRAG's fine-tuned
+    retrieval evaluator is used. See eval_harness/selfreflective.py for what is
+    reimplemented and where it deviates.
+
+    Retrieval is the same RetrieverAgent every other doc-grounded arm uses, fed
+    the raw question, and the drafting prompt is the shared one -- so a
+    difference against `single_agent` is the critique loop and nothing else.
+    """
+
+    def __init__(self, client: Optional[LLMClient] = None, top_k: int = 4,
+                 keep_partial: bool = True):
+        import multiagent_rag_v3 as marag
+        from .selfreflective import SelfReflectiveRAG
+        self.marag = marag
+        self.retriever = marag.RetrieverAgent()
+        self.top_k = top_k
+        self.client = client or make_client("ollama:llama3.1")
+        self.engine = SelfReflectiveRAG(self.client, top_k=top_k,
+                                        keep_partial=keep_partial)
+        self.name = "selfreflective"
+
+    def available(self) -> bool:
+        return self.client.available()
+
+    def generate(self, query: str) -> Dict:
+        with _silenced(self.marag):
+            docs = self.retriever.run(query, top_k=self.top_k,
+                                      original_query=query)
+            pool = list(getattr(self.retriever, "last_pool", []) or [])
+        out = self.engine.run(query, docs, build_synthesis_prompt)
+        # `docs` stays the full retrieved list rather than the critique-filtered
+        # one: IR metrics score what the system retrieved, and reporting only the
+        # kept documents would flatter precision by hiding the discards.
+        return {
+            "answer": out["answer"],
+            "docs": [normalize_doc(d) for d in docs],
+            "self_quality": None,
+            "pool": [normalize_doc(d) for d in pool],
+            "trace": out["trace"],
+        }
+
+
 def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:
     """
     Build generators from short specs:
@@ -269,6 +316,10 @@ def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:
                                       model through the shared prompt, so its
                                       answer scores are comparable to
                                       single_agent's (reported as "marag_llm")
+      "selfreflective"             -> Self-RAG/CRAG-style critique loop over the
+                                      same retrieval (reimplementation, not the
+                                      published checkpoints)
+      "selfreflective:ollama:llama3.1" -> same, with a chosen critic/synthesis model
       "single_agent"               -> SingleAgentGenerator (mistral synthesis)
       "single_agent:ollama:llama3.1" -> SingleAgentGenerator with a given model
       "raw:ollama:llama3.1"        -> RawLLMGenerator over that model
@@ -285,6 +336,11 @@ def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:
             gens.append(SingleAgentGenerator(top_k=top_k))
         elif spec.startswith("single_agent:"):
             gens.append(SingleAgentGenerator(make_client(spec.split(":", 1)[1]), top_k))
+        elif spec == "selfreflective":
+            gens.append(SelfReflectiveGenerator(top_k=top_k))
+        elif spec.startswith("selfreflective:"):
+            gens.append(SelfReflectiveGenerator(
+                make_client(spec.split(":", 1)[1]), top_k))
         elif spec.startswith("raw:"):
             gens.append(RawLLMGenerator(make_client(spec.split(":", 1)[1])))
         else:
