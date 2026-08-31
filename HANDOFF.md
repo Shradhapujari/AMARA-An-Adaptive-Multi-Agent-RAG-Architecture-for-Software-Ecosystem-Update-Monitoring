@@ -135,7 +135,40 @@ This reaches **parity** with the single-agent baseline (0.988), not
 superiority, at roughly 2× latency. The multi-agent justification is therefore
 still unproven — that is the open research question, not a code problem.
 
-### In flight
+### Stopped deliberately (2026-08-31)
+
+Work was halted here to finalize the paper. Three things are complete as code but
+have no results in the paper, by choice:
+
+- **The self-reflective baseline arm** (`eval_harness/selfreflective.py`,
+  `--generators selfreflective`). A reimplementation of Self-RAG's per-passage
+  critiques and CRAG's corrective flow over our retrieval, model held constant.
+  43 tests. Its evaluation run was stopped at 8 of 100 questions; no results are
+  reported, and Section 2 says so explicitly rather than leaving the arm
+  unmentioned. To finish it:
+  `MARAG_RERANK=embed python -m eval_harness.run_eval --dataset data/benchmark_100.json --generators selfreflective,single_agent:ollama:llama3.1,marag:ollama:llama3.1 --judge ollama:llama3.1`
+  (~85 min at ~52 s/question for three arms). Per-query rows carry
+  `critique_trace`, so `n_retrieved - n_relevant` gives the count of documents
+  the critic discarded.
+- **Two ISREL bugs, both fixed**, both found by a peer session reading the code
+  against its own comments: the relevance critique failed *closed* on a
+  malformed reply, and a negated rejection ("not irrelevant") was read as a
+  rejection. Both sat on the side that narrows the candidate set toward the
+  critic's preferences, which is the circularity the threats section discusses.
+  The bound the paper needs — a document is discarded only when the critique
+  asserts IRRELEVANT as a non-negated word — now holds, pinned by 28 tests.
+- **Three sessions worked this repo concurrently.** By Claude-Session trailer:
+  `0186v` (paper's scaled tables, the self-reflective arm, this file,
+  PROVENANCE.md, compile plumbing), `01SCr` (inversion statistics,
+  judge-independence threat, judge bibitems), `01T8t` (`scripts/phase_*.sh` --
+  the top_k sweep, phase ablation, qwen check, frozen-corpus control). If a
+  change looks like it appeared from nowhere, check `git log` before assuming a
+  bug. Note that `phase_ablation.sh` and a queued resume share an identical
+  `--generators marag,single_agent --judge-pool` signature, so a pattern-based
+  process gate cannot tell them apart -- only the corpus directory or parent pid
+  can.
+
+### Previously in flight
 
 **The 300-question run is incomplete.** It died at question **68 of 300**.
 `--resume` exists for this. To continue:

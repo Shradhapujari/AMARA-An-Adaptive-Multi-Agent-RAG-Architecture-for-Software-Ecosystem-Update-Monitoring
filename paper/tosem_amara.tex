@@ -417,6 +417,22 @@ isolates the architectural variable at the cost of not situating either system
 against published leaderboard numbers. We record this as a limitation rather than
 resolving it.
 
+One partial step toward resolving it is released with the harness. Since the
+obstacle is the retrieval stack rather than the methods, we reimplemented the
+inference-time mechanisms both papers introduce --- Self-RAG's per-passage
+relevance and support critiques, and CRAG's three-way corrective control flow
+--- over our own retrieval layer, with the synthesis model held constant and
+CRAG's web-search branch replaced by declining, since no web fallback exists in
+a fixed-corpus comparison. It is available as an arm of the evaluation harness
+(\texttt{--generators selfreflective}). We report no results for it: its
+evaluation was not complete at submission, and reporting a partial run of a
+baseline would be worse than reporting none. What the arm establishes now is
+only that the mechanisms can be evaluated in this setting once the retrieval
+obstacle is set aside, and that a future comparison need not port a Wikipedia
+index to make it. It is a reimplementation and not a reproduction: neither
+published checkpoint is involved, so it can never settle how those systems
+perform, only how their mechanisms behave over these sources.
+
 \subsection{Corrective Retrieval and Adaptive Feedback}
 
 Corrective retrieval methods modify retrieval behavior when retrieved
