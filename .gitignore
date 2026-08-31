@@ -29,3 +29,5 @@ paper/*.log
 paper/*.out
 paper/*.xdv
 paper/*.pdf
+paper/*.blg
+paper/*.bbl.bak

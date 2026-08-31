@@ -1,0 +1,4 @@
+system,mrr,ndcg@1,recall@1,ndcg@3,recall@3,ndcg@5,recall@5,faithfulness,answer_relevance,correctness,self_quality,latency_s
+marag,0.885,0.8633,0.6484,0.859,0.8083,0.8607,0.86,0.7,0.978,0.5,0.9239,20.2109
+marag_llm,0.885,0.8633,0.6484,0.859,0.8083,0.8607,0.86,0.9265,0.953,1.0,0.9239,20.761
+single_agent,0.8883,0.8633,0.6484,0.8627,0.8008,0.8697,0.8684,0.9315,0.973,0.75,,9.6066
