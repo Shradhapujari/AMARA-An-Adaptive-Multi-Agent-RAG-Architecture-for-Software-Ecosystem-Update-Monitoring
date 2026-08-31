@@ -7,7 +7,13 @@ Every generator implements:
         "answer":   str,                 # final natural-language answer
         "docs":     [doc, ...],          # retrieved docs (ranked); [] if no retrieval
         "self_quality": float|None,      # the system's own heuristic score, if any
+        "pool":     [doc, ...],          # pre-rerank candidates; [] if not applicable
     }
+
+`pool` is what the reranker was given, before it cut to top_k. It separates a
+ranking failure (the document was fetched and buried) from a fetch failure (the
+document was never retrieved at all) -- two defects with different fixes that
+the final ranked list cannot tell apart.
 
 doc is a dict with at least {"doc_id", "title", "text", "source", "url"}.
 
@@ -178,6 +184,9 @@ class MultiAgentRAGGenerator(Generator):
             "docs": [normalize_doc(d) for d in docs],
             "self_quality": result.get("quality"),
             "rewritten_query": rewrite.get("rewritten", ""),
+            "pool": [normalize_doc(d) for d in getattr(self.retriever, "last_pool", [])],
+            "rerank_spec": getattr(self.retriever, "last_rerank_spec", ""),
+            "rerank_degraded": getattr(self.retriever, "last_rerank_degraded", False),
         }
         if self.synth is not None:
             # The published template answer, kept for audit: the synthesised
@@ -219,6 +228,12 @@ class SingleAgentGenerator(Generator):
             "answer": answer,
             "docs": [normalize_doc(d) for d in docs],
             "self_quality": None,
+            # The baseline shares RetrieverAgent with the multi-agent arm, so it
+            # is reranked by the same backend. That is precisely why it is not a
+            # rerank-independent control, and why the pool is logged for it too.
+            "pool": [normalize_doc(d) for d in getattr(self.retriever, "last_pool", [])],
+            "rerank_spec": getattr(self.retriever, "last_rerank_spec", ""),
+            "rerank_degraded": getattr(self.retriever, "last_rerank_degraded", False),
         }
 
 
@@ -243,7 +258,7 @@ class RawLLMGenerator(Generator):
             answer = self.client.generate(prompt, temperature=0.0, max_tokens=400)
         except LLMError as e:
             answer = f"[generation error: {e}]"
-        return {"answer": answer, "docs": [], "self_quality": None}
+        return {"answer": answer, "docs": [], "self_quality": None, "pool": []}
 
 
 def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:

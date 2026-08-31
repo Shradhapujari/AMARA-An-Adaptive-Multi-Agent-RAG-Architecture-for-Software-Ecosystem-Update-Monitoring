@@ -16,7 +16,11 @@ Usage:
 
 Outputs a timestamped folder under results/<run_id>/ containing:
     config.json, manifest.json, per_query.jsonl, aggregate.csv,
-    qrels.json, report.md, and PNG comparison plots.
+    qrels.json, qrels_cache_snapshot.json, report.md, and PNG plots.
+
+`qrels.json` holds the judgments that scored THIS run, as
+{query_id: {doc_id: grade}}. `qrels_cache_snapshot.json` is the accumulating
+cross-run judgment cache and is provenance only -- do not score with it.
 """
 
 from __future__ import annotations
@@ -27,8 +31,17 @@ import json
 import os
 import random
 import re
+import sys
 import time
 from typing import Dict, List
+
+# corpus_snapshot and rerank live at the project root, next to the package.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import corpus_snapshot
+import rerank
 
 from .config import EvalConfig
 from .dataset import load_dataset, dataset_hash
@@ -83,6 +96,15 @@ def run(cfg: EvalConfig) -> str:
     random.seed(cfg.seed)
     os.makedirs(cfg.results_dir, exist_ok=True)
 
+    # Freeze the corpus before a single system is built. An ablation whose
+    # sources move between arms measures the sources, not the arms.
+    snap = corpus_snapshot.activate(cfg.corpus)
+    if snap is not None:
+        print(f"[harness] corpus {snap.mode}: {snap.dir}")
+    else:
+        print("[harness] corpus: LIVE (runs are not comparable to each other; "
+              "set MARAG_CORPUS=record:<dir> then replay:<dir> for an ablation)")
+
     if cfg.benchmark:
         records = bench_mod.load_benchmark(cfg.dataset, fmt=cfg.benchmark,
                                            limit=cfg.limit)
@@ -114,6 +136,11 @@ def run(cfg: EvalConfig) -> str:
 
     qrels_cache = _load_qrels_cache(cfg.results_dir)
     per_query: List[dict] = []
+    # The judgments actually used to score THIS run, per query. Kept separate
+    # from `qrels_cache`: the cache accumulates across every run and dataset
+    # that shares the results dir, so dumping it as the run's qrels made the
+    # run's own numbers unreproducible from its own artifacts.
+    qrels_used: Dict[object, Dict[str, int]] = {}
 
     for qi, rec in enumerate(records, 1):
         query = rec["query"]
@@ -130,10 +157,16 @@ def run(cfg: EvalConfig) -> str:
             print(f"    {g.name:28s} {len(out['docs'])} docs  {out['latency_s']}s")
 
         # ---- pool retrieved docs and judge relevance (cached) -----------
+        # The judging pool is the union of what the systems *returned*. With
+        # judge_pool it widens to what they *considered*, which is what makes
+        # pool recall -- the ceiling reranking could reach -- computable.
         pool: Dict[str, dict] = {}
         for out in sys_outputs.values():
             for d in out["docs"]:
                 pool.setdefault(d["doc_id"], d)
+            if cfg.judge_pool:
+                for d in out.get("pool") or []:
+                    pool.setdefault(d["doc_id"], d)
         qrels: Dict[str, int] = {}
         if judging:
             for did, d in pool.items():
@@ -144,6 +177,7 @@ def run(cfg: EvalConfig) -> str:
                     g_label = judge.relevance_label(query, d)
                     qrels[did] = g_label
                     qrels_cache[ck] = g_label
+        qrels_used[rec["id"]] = dict(qrels)
 
         # ---- per-system metrics -----------------------------------------
         for name, out in sys_outputs.items():
@@ -158,6 +192,20 @@ def run(cfg: EvalConfig) -> str:
             if cfg.benchmark and rec.get("ground_truth"):
                 bench_label = bench_mod.score_prediction(out["answer"],
                                                          rec["ground_truth"])
+            pool_ids = [d["doc_id"] for d in (out.get("pool") or [])]
+            # Ceiling on recall@k for this fetch: the share of judged-relevant
+            # documents that were in the pool at all. A low pool recall with a
+            # high in-pool precision means the reranker is doing its job and the
+            # fetch is not -- no reranker can promote a document it never saw.
+            #
+            # Only meaningful with judge_pool. Without it the judged set is drawn
+            # from the returned top_k alone, every gold document is in the pool
+            # by construction, and the number is a tautological 1.0 -- which is
+            # worse than absent, because it reads as a finding.
+            pool_recall = None
+            if cfg.judge_pool:
+                gold = {d for d, g in qrels.items() if g > 0}
+                pool_recall = (len(gold & set(pool_ids)) / len(gold)) if (gold and pool_ids) else None
             per_query.append({
                 "benchmark_label": bench_label,
                 "query_id": rec["id"],
@@ -166,6 +214,11 @@ def run(cfg: EvalConfig) -> str:
                 "system": name,
                 "n_docs": len(out["docs"]),
                 "doc_ids": ranked,
+                "pool_size": len(pool_ids),
+                "pool_doc_ids": pool_ids,
+                "pool_recall": pool_recall,
+                "rerank_spec": out.get("rerank_spec", ""),
+                "rerank_degraded": out.get("rerank_degraded", False),
                 "latency_s": out["latency_s"],
                 "self_quality": out.get("self_quality"),
                 "answer": out["answer"],
@@ -182,12 +235,38 @@ def run(cfg: EvalConfig) -> str:
     with open(os.path.join(run_dir, "per_query.jsonl"), "w") as f:
         for row in per_query:
             f.write(json.dumps(row) + "\n")
-    json.dump(qrels_cache, open(os.path.join(run_dir, "qrels.json"), "w"), indent=1)
+    # qrels.json = exactly what scored this run, keyed by query id, so
+    # aggregate.csv can be recomputed from the artifacts alone. Verified: the
+    # previous version dumped `qrels_cache` (every judgment ever made in this
+    # results dir), which reproduced only 2 of 20 per-query metric rows because
+    # the recall/nDCG denominators came out of a much larger judged pool.
+    json.dump({str(qid): g for qid, g in qrels_used.items()},
+              open(os.path.join(run_dir, "qrels.json"), "w"), indent=1)
+    # The accumulating cross-run cache, snapshotted for provenance only.
+    json.dump(qrels_cache,
+              open(os.path.join(run_dir, "qrels_cache_snapshot.json"), "w"), indent=1)
     cfg_dict = {k: getattr(cfg, k) for k in vars(cfg)}
     cfg_dict["systems_evaluated"] = [g.name for g in gens]
     cfg_dict["judge_active"] = judging
     cfg_dict["dataset_hash"] = ds_hash
     cfg_dict["n_questions"] = len(records)
+    # Which arm this run actually is. Reading it back off the environment at
+    # write time would be a guess; ask the reranker the harness really used.
+    _rr = rerank.get_reranker()
+    cfg_dict["rerank_requested"] = os.environ.get("MARAG_RERANK", rerank.DEFAULT_SPEC)
+    cfg_dict["rerank_spec"] = _rr.spec
+    cfg_dict["rerank_degraded"] = bool(_rr.degraded)
+    cfg_dict["corpus"] = snap.stats() if snap is not None else {"mode": "live",
+                                                                "frozen": False}
+    if snap is not None:
+        st = cfg_dict["corpus"]
+        print(f"[harness] corpus {st['mode']}: {st['hits']} hits, "
+              f"{st['misses']} misses, {st['corpus_misses']} of them on corpus "
+              f"hosts -> frozen={st['frozen']}")
+        if st["corpus_misses"]:
+            print("[harness] WARNING: corpus hosts were read live during replay; "
+                  "this run is NOT comparable to other arms. "
+                  f"misses by host: {st['misses_by_host']}")
     json.dump(cfg_dict, open(os.path.join(run_dir, "config.json"), "w"), indent=2)
 
     if cfg.benchmark:
@@ -228,6 +307,11 @@ def _parse_args() -> EvalConfig:
                         "(deterministic correct/incorrect/missing labelling)")
     p.add_argument("--top-k", type=int, default=cfg.top_k)
     p.add_argument("--seed", type=int, default=cfg.seed)
+    p.add_argument("--judge-pool", action="store_true", default=cfg.judge_pool,
+                   help="judge every pre-rerank candidate, enabling pool recall")
+    p.add_argument("--corpus", default=cfg.corpus,
+                   help="record:<dir> | replay:<dir> — freeze the live sources "
+                        "so arms of an ablation see identical documents")
     a = p.parse_args()
     cfg.dataset = a.dataset
     cfg.limit = a.limit
@@ -236,6 +320,8 @@ def _parse_args() -> EvalConfig:
     cfg.benchmark = a.benchmark
     cfg.top_k = a.top_k
     cfg.seed = a.seed
+    cfg.judge_pool = a.judge_pool
+    cfg.corpus = a.corpus
     return cfg
 
 

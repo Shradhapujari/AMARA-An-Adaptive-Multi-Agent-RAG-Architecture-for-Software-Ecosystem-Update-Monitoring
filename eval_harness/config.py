@@ -34,5 +34,14 @@ class EvalConfig:
     top_k: int = 4
     ks: List[int] = field(default_factory=lambda: [1, 3, 5])
     seed: int = 42
+    # Judge every pre-rerank candidate, not only the top_k that survived it.
+    # Buys pool recall -- the ceiling any reranker could reach on this fetch --
+    # at the cost of one judge call per extra candidate, so it is off by default
+    # and worth turning on for the small ground-truth sets.
+    judge_pool: bool = False
+    # Frozen-corpus control, "record:<dir>" or "replay:<dir>"; see
+    # corpus_snapshot.py. Empty means read the live endpoints, which makes two
+    # runs incomparable and so must never be used for an ablation.
+    corpus: str = os.environ.get("MARAG_CORPUS", "")
     # Where to write the run.
     results_dir: str = RESULTS_DIR

@@ -1,2 +1,13 @@
+# Pinned so a re-run reproduces the reported numbers. The build scripts and the
+# eval harness both claim byte-identical output on replay; unpinned ranges break
+# that claim the first time a transitive dependency ships a behaviour change.
+#
+# Versions below are the ones present in venv311 and used for every number in
+# results/ -- except streamlit, which is NOT installed in that venv (the demo
+# UI is not exercised by the harness or the tests). Verify before quoting it.
+requests==2.34.2
+numpy==2.4.6
+pytest==9.1.1
+
+# Demo UI only (app.py, DemoMain*.py, marag_app.py). Unverified locally.
 streamlit>=1.32.0
-requests>=2.31.0

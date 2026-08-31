@@ -13,3 +13,6 @@ results/
 _derename.py
 *.pyes
 venv/
+
+# frozen corpus recordings (large, regenerable from the live APIs)
+data/corpus_snapshot*/
