@@ -59,7 +59,7 @@ run's `per_query.jsonl` still parses, and tell them the `--resume` id.
 | 1 Defects fixed | done | `a1c717c` fetch, `46ad7d0` qrels keys, `81f479d` findings |
 | 2 Experiment infrastructure | done | frozen corpus, arm provenance, pool logging, atomic cache, edit-proof scripts |
 | 3 Frozen ablation, n=10 | passed | see `eval_harness/FINDINGS.md` for caveats |
-| 5 Ablation, n=100, clean corpus | **NOT YET ADMISSIBLE** | see §3 — this is the open blocker |
+| 5 Ablation, n=100, clean corpus | **admissible per-arm; pool-identity gate at 180/200** | see §3 — a real but explained gap |
 | 4 Independent judge | blocked | needs `OPENAI_API_KEY` |
 | 6 Headline at n=300 | not started | after Phase 5 lands admissible |
 | 7 Artifact packaging | not started | — |
@@ -125,6 +125,39 @@ into a fresh directory, `data/corpus_snapshot_b100_p5`**, precisely to avoid
 this. Check `results/` for a run against that directory before trusting any
 n=100 number; anything still citing `corpus_snapshot_b100_clean` is suspect no
 matter its miss count.
+
+**UPDATE 04:16 — Phase 5 completed on the fresh directory, and the picture
+changed again.** All three arms (`run_1788172664` none, `run_1788173743`
+bm25, `run_1788174490` embed:nomic-embed-text) report `corpus_misses=0` — the
+fresh single-writer directory genuinely fixed the contamination problem. But
+`check_runs.py`'s stronger pool-IDENTITY gate (do all three arms see the same
+pre-rerank candidates for a given question, not just "did any of them go
+live") still fails: **180/200, not 200/200.**
+
+Root cause found and fixed, `526afa9`: `extract_vendor` broke tied vendor
+matches by iterating a raw Python `set`, whose order is randomized per
+process by `PYTHONHASHSEED`. `phase_ablation.sh` launches each arm as a
+separate process, so the identical question could resolve to a different
+vendor on different arms, changing which endpoints got queried — a frozen
+corpus does not help if the retrieval layer asks it different questions.
+Verified directly: `extract_vendor("...rust-lang rust v1.92.0...")` returned
+`"rust"` under most `PYTHONHASHSEED` values and `"release"` (a spurious
+registry collision) under others. Fixed with `sorted(set(...))`; 4 new tests
+in `tests/test_vendor_extraction_determinism.py`, 403 total passing.
+
+**This fix landed mid-sweep**, after `none` and `bm25` had already run — so
+none of the three Phase 5 arms benefited from it, which is exactly why
+180/200 is not 200/200 here. The fix is real and forward-looking: anything
+launched after `526afa9` should see full pool identity. Whether to re-run
+`none`/`bm25`/`embed` cleanly on top of the fix, or accept this run with the
+caveat stated, is an open call — not made unilaterally here.
+
+Despite the imperfect pool-identity gate, the **admissibility numbers
+themselves reproduce the paper's headline finding independently**: rerankers
+improve monotonically (none → bm25 → embed, nDCG@3 for `marag`: 0.486 → 0.627
+→ 0.656), yet `marag` still does not beat `single_agent` at the best
+reranker (nDCG@3 0.656 vs 0.646, recall@5 0.387 vs 0.388) — consistent with
+`tab:scaled-retrieval` in the paper. Full arm table: `scripts/check_runs.py`.
 
 ## 4. Artifacts, and which ones do not travel
 
