@@ -434,12 +434,50 @@ RAGAS~\cite{es2024ragas} and ARES~\cite{saadfalcon2024ares} estimate
 faithfulness and relevance without gold answers.
 
 Two aspects of that practice bear on the metric inversion reported here. The
-first is judge independence. LLM judges agree with human preferences at rates
-comparable to human--human agreement, but the same study documents position,
-verbosity, and self-enhancement biases~\cite{zheng2023judge}, and evaluators
-recognize and favor text they themselves generated~\cite{panickssery2024self}. A
-judge that is also the pipeline's generator, or that is prompted with the
-pipeline's own notion of relevance, is not independently measuring it. The second
+first is judge independence, and the IR literature has by now measured it
+precisely enough to be quantitative about what an LLM judge can and cannot
+support. The encouraging result is at the level of system \emph{ordering}:
+UMBRELA, an open-source reproduction of Bing's assessor, induces rankings that
+agree with NIST qrels on the TREC Deep Learning tracks at Kendall's $\tau$ of
+0.873 to 0.944~\cite{upadhyay2024umbrela}, and Thomas et al.\ report run-level
+$\tau$ of 0.77 to 0.86 over 110 TREC-Robust runs~\cite{thomas2024preferences}.
+The discouraging result is at the level of individual \emph{labels}, which is
+what a qrel file actually contains: UMBRELA's per-item Cohen's
+$\kappa$~\cite{cohen1960coefficient} against
+human assessors is only 0.31 to 0.37 on the four-point
+scale~\cite{upadhyay2024umbrela}, and Faggioli et al.\ measure $\kappa=0.26$ on
+the TREC-DL 2021 pool against $\kappa=0.52$ between two groups of human
+assessors~\cite{faggioli2023perspectives}. Agreement is also asymmetric:
+LLM judges over-label relevance, so a machine ``not relevant'' label is
+considerably more trustworthy than a machine ``relevant'' one, and they can be
+induced to grade a passage of randomly sampled words as perfectly relevant
+simply by injecting the query string into
+it~\cite{alaofi2024fooled}. Faggioli et al.\ accordingly place practice on a
+spectrum from human judgment through AI assistance and human verification to
+full automation, and decline to endorse the fully automated
+endpoint~\cite{faggioli2023perspectives}; Soboroff argues the stronger position
+that whatever generates the qrels also defines the ceiling, so a system better
+than the judge cannot be measured as
+such~\cite{soboroff2025dontuse}.
+
+Circularity is the specific form of this problem that a multi-agent pipeline
+invites, and its cost has been simulated. Clarke and Dietz re-ranked all 75 runs
+of the TREC 2024 RAG track with UMBRELA and then scored them with UMBRELA:
+agreement with human judgments fell from $\tau \approx 0.84$ to 0.38 at rank~10
+and to $-0.40$ at rank~5, twelve systems exceeded nDCG 0.95 where manual
+assessment placed them at 0.68 to 0.72, and a deliberately constructed run rose
+from 28th under human assessment to 5th under automatic
+assessment~\cite{clarke2024cannot}. The same effect is documented at the level
+of preference: judges recognize and favor text they themselves
+generated~\cite{panickssery2024self}, and LLM-as-judge studies report position,
+verbosity, and self-enhancement biases~\cite{zheng2023judge}. A judge that is
+also the pipeline's generator, or that is prompted with the pipeline's own
+notion of relevance, is not independently measuring it. There is one direction
+in which this literature works in favour of a finding rather than against it:
+because LLM judges are documented to penalize lexically grounded retrieval
+relative to LLM-mediated retrieval~\cite{faggioli2023perspectives}, a result in
+which the plainer, non-rewriting system \emph{wins} is not the result this bias
+would manufacture. The second
 is abstention. The CRAG benchmark scores an accurate answer $1$, a missing answer
 $0$, and an incorrect answer $-1$, explicitly preferring an admission of
 ignorance to a confident
@@ -1992,7 +2030,7 @@ forcing a categorical response. Future architectures should therefore
 consider retrieval confidence as a first-class component of answer
 generation.
 
-Six limitations of the current system warrant discussion.
+Seven limitations of the current system warrant discussion.
 
 \textbf{Data coverage lag.}
 Recent community posts may not yet be indexed in the data lake. In the
@@ -2049,6 +2087,40 @@ $n$ at all. We report them as observations rather than findings. The claim that
 does not rest on an interval estimate is the document count: 22 of 23 relevant
 documents missing is a census of the retrieved sets, not a sample statistic,
 and its scaled counterpart (19 of 158) was computed on 100 questions.
+
+\textbf{LLM relevance judge.}
+All relevance judgments reported here were produced by \texttt{llama3.1}, which
+is also the synthesis model for all three arms. The judge and the generator are
+therefore the same model, which is the circularity condition the IR literature
+warns about, and we did not measure agreement between this judge and human
+assessors on our corpus. Three consequences follow, and we state them at the
+strength the evidence supports. First, published agreement figures suggest our
+labels are usable for \emph{ordering} systems and weak for anything requiring
+per-item correctness: run-level Kendall's $\tau$ of 0.77 to
+0.94~\cite{upadhyay2024umbrela,thomas2024preferences} against per-label
+$\kappa$ near 0.26 to 0.37~\cite{upadhyay2024umbrela,faggioli2023perspectives}.
+The claims we draw from these labels are ordering claims and document counts,
+not calibrated effectiveness estimates. Second, LLM judges over-label
+relevance~\cite{alaofi2024fooled}, which inflates the denominator of the
+census in Section~\ref{sec:localizing}: if some of the 23 documents the baseline
+retrieved are not truly relevant, the true count of missed relevant documents is
+smaller than 22, though the direction of the finding is unaffected because those
+documents were absent from the multi-agent candidate pool regardless of their
+label. Third, LLM qrels carry less discriminative power than human ones ---
+Faggioli et al.\ separate 65\% of run pairs under MAP where human judgments
+separate 72\%~\cite{faggioli2023perspectives} --- so the significance reported
+in Section~\ref{sec:two-metrics} was obtained under a handicap rather than
+assisted by one.
+
+We took one mitigation and omit two. The answer-quality finding was re-judged by
+a second, different-family model (\texttt{qwen2.5:7b-instruct}) on 40 questions,
+and the format effect held at $+0.107$ versus $+0.111$, significant under both
+judges; that check is reported with the artifacts. The retrieval judgments were
+not re-scored by a second judge, and no human-assessor sample was drawn. Both
+are the obvious next steps, together with the adversarial ``gullibility''
+screening --- checking whether the judge can be fooled by query-string
+injection --- that Alaofi et al.\ show is not predicted by $\kappa$ and must be
+tested separately~\cite{alaofi2024fooled}.
 
 \textbf{Statistical impact.}
 The 17.2\% improvement on the bespoke score is statistically significant
@@ -2610,6 +2682,44 @@ A. Panickssery, S. R. Bowman, and S. Feng,
 ``LLM Evaluators Recognize and Favor Their Own Generations,''
 \textit{Advances in Neural Information Processing Systems},
 vol. 37, pp. 68772--68802, 2024.
+
+\bibitem{upadhyay2024umbrela}
+S. Upadhyay, R. Pradeep, N. Thakur, N. Craswell, and J. Lin,
+``UMBRELA: UMbrela is the (Open-Source Reproduction of the) Bing RELevance
+Assessor,''
+\textit{arXiv preprint https://arxiv.org/abs/2406.06519}, 2024.
+
+\bibitem{thomas2024preferences}
+P. Thomas, S. Spielman, N. Craswell, and B. Mitra,
+``Large Language Models Can Accurately Predict Searcher Preferences,''
+\textit{arXiv preprint https://arxiv.org/abs/2309.10621}, 2024.
+
+\bibitem{faggioli2023perspectives}
+G. Faggioli, L. Dietz, C. Clarke, G. Demartini, M. Hagen, C. Hauff, N. Kando,
+E. Kanoulas, M. Potthast, B. Stein, and H. Wachsmuth,
+``Perspectives on Large Language Models for Relevance Judgment,''
+\textit{Proceedings of the 2023 ACM SIGIR International Conference on Theory of
+Information Retrieval},
+pp. 39--50, 2023.
+
+\bibitem{clarke2024cannot}
+C. L. A. Clarke and L. Dietz,
+``LLM-Based Relevance Assessment Still Can't Replace Human Relevance
+Assessment,''
+\textit{arXiv preprint https://arxiv.org/abs/2412.17156}, 2024.
+
+\bibitem{alaofi2024fooled}
+M. Alaofi, P. Thomas, F. Scholer, and M. Sanderson,
+``LLMs Can Be Fooled into Labelling a Document as Relevant,''
+\textit{Proceedings of the 2024 Annual International ACM SIGIR Conference on
+Research and Development in Information Retrieval in the Asia Pacific Region},
+2024.
+
+\bibitem{soboroff2025dontuse}
+I. Soboroff,
+``Don't Use LLMs to Make Relevance Judgments,''
+\textit{Information Retrieval Research},
+vol. 1, no. 1, pp. 29--46, 2025.
 
 \bibitem{rajpurkar2018squad2}
 P. Rajpurkar, R. Jia, and P. Liang,
