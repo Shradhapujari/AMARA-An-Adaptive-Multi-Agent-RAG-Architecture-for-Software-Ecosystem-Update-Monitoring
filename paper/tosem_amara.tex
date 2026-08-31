@@ -1456,9 +1456,18 @@ when the initial result set was insufficient.
 
 \subsection{Self-Improvement Behavior}
 
-Retrieval quality increased from a mean score of 0.756 in the first
-evaluation tertile ($Q_1$--$Q_{17}$) to 0.826 in the final tertile
-($Q_{34}$--$Q_{50}$), corresponding to a 9.3\% increase.
+Retrieval quality, as measured by the bespoke score, increased from a mean of
+0.756 in the first evaluation tertile ($Q_1$--$Q_{17}$) to 0.826 in the final
+tertile ($Q_{34}$--$Q_{50}$), corresponding to a 9.3\% increase.
+
+This comparison is confounded, and we report it with that caveat rather than as
+a result. Tertiles are ordered in time, and the system retrieves from live
+sources whose contents change over the course of a run, so corpus drift is not
+separable from adaptation in this design. Establishing the effect requires
+either a frozen corpus snapshot or an interleaved design in which memory is
+enabled and disabled across the question order. The mechanism is sound and its
+learned terms are interpretable (Table~\ref{tab:learned_terms}); the magnitude
+reported here is not established.
 
 A paired $t$-test comparing the first and last tertiles yielded
 $t(16)=2.18$ and $p=0.043$ (two-tailed). The corresponding effect size
@@ -1621,79 +1630,154 @@ space constraints.
 
 \section{Discussion}\label{sec:discussion}
 
-Several observations emerge from the evaluation.
+\subsection{What Generalizes}\label{sec:generalizes}
+
+The finding most likely to transfer to other systems is also the simplest to
+state: \emph{a rewriting agent must add to the retrieval it performs, not
+substitute for it.} The distinction is easy to lose because it is not visible
+in the agent's own output. A rewritten query inspected in isolation looks
+correct --- it names the vendor, uses release-note vocabulary, and reads like a
+well-formed search. What is invisible at that level is that issuing it
+\emph{instead of} the user's question silently narrows the candidate set, and
+that the narrowing is unrecoverable downstream. Our pipeline exhibited this for
+its entire development history without any component appearing to malfunction.
+
+Three properties made it hard to see, and each is a property of agentic
+pipelines generally rather than of this system:
 
 \begin{itemize}
+  \item \textbf{The failure is in the wiring, not in a component.} Every agent
+  did its own job correctly. The rewriter produced good rewrites; the retriever
+  faithfully queried what it was given; the reranker correctly ordered what it
+  received. Component-level testing cannot detect this, because no component is
+  wrong.
 
-\item \textbf{Architectural decomposition improves retrieval quality.}
-The proposed architecture separates query rewriting, retrieval,
-evaluation, and orchestration into specialized agents. The observed
-17.2\% improvement over the single-agent baseline suggests that
-this decomposition improves retrieval performance for software
-update questions, which often contain abbreviated product names,
-informal terminology, incomplete version identifiers, and
-user-reported symptoms. Separating query rewriting from retrieval
-allows terminology normalization before document search, improving
-retrieval coverage.
+  \item \textbf{The aggregate metric moved the right way.} The bespoke
+  retrieval-quality score rose when the architecture was introduced, which is
+  what a designer checks. A score computed over the retrieved set cannot report
+  documents that were never retrieved --- their absence is not an observation it
+  is capable of making.
 
-The architecture also improves traceability by allowing failures to
-be associated with vendor identification, query reformulation,
-retrieval coverage, evaluation, or answer synthesis rather than
-treated as end-to-end model failures.
+  \item \textbf{A plausible cause absorbed the evidence.} Query rewriting is
+  motivated in the literature by vocabulary mismatch, so a retrieval deficit
+  after rewriting invites a ranking explanation. We pursued that explanation
+  first, built three rerankers, and improved MRR by 150\% without materially
+  moving nDCG. Only the residual gap indicated that the diagnosis was wrong.
+\end{itemize}
 
-\item \textbf{Adaptive feedback improves retrieval without retraining.}
-The observed 9.3\% retrieval improvement demonstrates that retrieval
-behavior can improve through accumulated retrieval experience without
-modifying model weights. Successful retrieval patterns are preserved
-through persistent memory and influence future query reformulation.
+The last point suggests a diagnostic worth generalizing. When an intervention
+improves the metric it targets while leaving the outcome metric unchanged, the
+intervention is likely addressing a real but secondary defect. In retrieval
+specifically, MRR improving while nDCG@$k$ and Recall@$k$ stay flat is the
+signature of a candidate set that does not contain the answer, and it is
+distinguishable from a ranking problem only by inspecting the candidate set
+directly. We therefore instrumented the pipeline to expose its pre-rerank pool,
+so that ``the reranker mis-ordered it'' and ``it was never retrieved'' are
+separable diagnoses rather than a single unexplained score.
 
-This result is noteworthy because the architecture operates entirely
-with a locally hosted LLM. Rather than relying on additional training
-data or parameter updates, adaptation occurs through retrieval-level
-feedback. Such an approach may be attractive in environments where
-retraining is costly, unavailable, or undesirable due to privacy,
-deployment, or reproducibility requirements.
+\subsection{What Multi-Agent Decomposition Did and Did Not Buy}
+\label{sec:decomposition}
 
-The observed improvement should not be interpreted as evidence of
-general learning capability. Instead, it demonstrates that retrieval
-behavior can be incrementally refined through accumulated retrieval
-experience. Larger studies are required to determine how such gains
-scale over longer interaction histories and larger question sets.
+With both defects repaired and the synthesis model held constant, the
+multi-agent architecture matches the single-agent baseline on retrieval quality
+and on faithfulness, at approximately twice the latency
+(Section~\ref{sec:scaled-eval}). We report this as the result rather than
+searching for a configuration that reverses it.
 
-\item \textbf{Multiple document sources provide complementary evidence.}
-Many questions in the evaluation required information that was not
-available from a single source. Release notes provide authoritative
-information regarding versions, fixes, and feature changes. Security
-advisories provide vulnerability information and mitigation guidance.
-Community discussions provide deployment experiences, regressions,
-compatibility issues, and workarounds that may not yet appear in
-official documentation.
+This does not establish that decomposition is worthless, and we are careful not
+to claim it does. It establishes that on this benchmark, for this domain, with
+these metrics, decomposition did not improve answer quality over a
+well-configured single-agent baseline --- and that the improvement originally
+attributed to decomposition was an artifact of the metric used to measure it.
+Three qualifications bound that claim:
 
-The combination of these sources is particularly valuable for software
-update questions because users frequently ask about operational effects
-of updates rather than only documented release information. A release
-note may confirm that a defect was fixed, while community discussions
-may reveal whether users continue to experience related issues after
-deployment. Treating these sources as complementary rather than
-competing forms of evidence improves coverage while preserving source
-attribution.
+\begin{itemize}
+  \item The baseline is not weak. It queries the same live endpoints, uses the
+  same synthesis prompt, and benefits from the same reranking stage. A weaker
+  baseline --- one without vendor-aware retrieval, or restricted to a single
+  source --- would likely lose, but the comparison would not isolate
+  architecture.
 
-\item \textbf{Source-grounded retrieval reduces unsupported update
-claims.}
-The supplementary evaluation produced four fully correct answers and
-six partially correct answers. No unsupported version numbers, release
-dates, patch identifiers, or software update claims were observed in
-this sample.
+  \item Retrieval quality is not the only axis on which decomposition might pay.
+  The architecture's failure traceability is real and is not captured by nDCG:
+  when an answer is wrong, the pipeline localizes the fault to vendor
+  extraction, query reformulation, retrieval coverage, evaluation, or synthesis.
+  For a system intended to be maintained rather than merely benchmarked, this
+  has value that our metrics do not score.
 
-This observation is particularly relevant for software maintenance
-tasks. Incorrect version information may influence update planning,
-security decisions, compatibility assessments, or deployment timing.
-While the evaluation sample remains limited, grounding answer
-generation in retrieved software ecosystem documents appears to reduce
-the likelihood of unsupported version-specific outputs. Future work
-should evaluate this behavior using larger benchmark datasets and
-longer deployment periods.
+  \item The evaluator agent's ability to decline is likewise unscored here.
+  Returning ``the retrieved sources do not answer this'' is preferable to a
+  confident wrong version number in a maintenance context, and the CRAG-style
+  scoring we implement rewards exactly that asymmetry --- but our ground-truth
+  coverage is too small for it to carry weight.
+\end{itemize}
 
+\subsection{Metric Design as a Threat to Architectural Claims}
+\label{sec:metric-threat}
+
+The 17.2\% improvement was not fabricated; it is what the score we defined
+reports, and it reproduces. The problem is what the score is capable of
+observing. A measure of overlap between a question and the documents retrieved
+for it rewards retrieving topically adjacent material, and a rewriting agent
+that expands a question into vendor and release-note vocabulary produces
+precisely that. The metric and the mechanism were, in effect, correlated
+through the same vocabulary.
+
+We think this is a general hazard for agentic-system evaluation rather than a
+mistake peculiar to this work. Domain-specific systems frequently define
+domain-specific quality measures, with good justification: standard IR metrics
+require relevance judgments, which are expensive. But a bespoke measure designed
+by the same people who designed the architecture will tend to reward the
+behaviors the architecture produces. The practical mitigation is not to abandon
+domain measures but to report at least one metric whose definition is
+independent of the system --- pooled-judgment IR metrics, or a deterministic
+benchmark score --- and to treat a disagreement between them as a finding
+requiring explanation rather than a discrepancy to be reconciled toward the
+preferred result.
+
+Our answer-quality measurements carry the same lesson in a second form.
+Comparing the multi-agent system's structured template against the baseline's
+prose showed a 0.23 faithfulness deficit that disappeared entirely when the same
+retrieved documents were synthesized through the baseline's own prompt
+(Section~\ref{sec:scaled-eval}). An LLM judge comparing structured output
+against fluent prose is partly scoring fluency. Any evaluation of an agentic
+system that emits structured output against a baseline that emits prose is
+exposed to this, and detecting it required constructing an arm for no purpose
+other than removing the confound.
+
+\subsection{Observations That Survive}\label{sec:survives}
+
+Several observations from the original evaluation are unaffected by the
+corrections above, because they do not depend on the architecture comparison.
+
+\begin{itemize}
+  \item \textbf{Heterogeneous sources provide complementary evidence.} Release
+  notes give authoritative version and fix information; advisories give
+  vulnerability details and mitigations; community discussions give deployment
+  experience, regressions, and workarounds that have not reached official
+  documentation. Users frequently ask about the operational effects of an update
+  rather than its documented contents: a release note may confirm a defect was
+  fixed while community discussion reveals users still experiencing it.
+  Treating these as complementary rather than competing, and preserving the
+  distinction in the retrieved set, improves coverage without conflating
+  provenance.
+
+  \item \textbf{Source grounding constrains version-specific claims.} Across the
+  version-specific evaluation, generated answers did not contain version
+  numbers, release dates, or patch identifiers absent from the retrieved
+  documents. Incorrect version information has direct operational consequences
+  for update planning and security decisions, so this property matters
+  independently of retrieval ranking. The sample is small and this is an
+  observation rather than a guarantee.
+
+  \item \textbf{Retrieval-level adaptation operates without retraining.} Query
+  expansion terms accumulate weights from retrieval outcomes and bias subsequent
+  reformulation, with no human preference labels and no parameter updates. The
+  learned terms are interpretable on inspection. We are more cautious than the
+  conference version about the size of the effect: the tertile comparison that
+  produced the 9.3\% figure is confounded with the live corpus drifting over the
+  course of a run, and we did not control for it. The mechanism is sound; the
+  magnitude is not established.
 \end{itemize}
 
 \subsection{Implications for Software Update Question Answering}
@@ -1764,10 +1848,14 @@ additional languages, and different software ecosystems remains an
 open question.
 
 \textbf{Statistical impact.}
-The 17.2\% improvement is statistically significant ($p=0.020$), but
-the sample size ($n=50$) limits confidence in precise performance
-estimates. Larger evaluations are required to establish more robust
-effect sizes and confidence intervals.
+The 17.2\% improvement on the bespoke score is statistically significant
+($p=0.020$), and this is precisely why significance is insufficient on its own:
+the effect is real, reproducible, and measured on a quantity that cannot observe
+the defect described in Section~\ref{sec:localizing}. A $p$-value bounds
+sampling error, not construct validity. The scaled evaluation
+(Section~\ref{sec:scaled-eval}) reports bootstrap confidence intervals on
+metrics whose definition is independent of this system, and under those the two
+architectures are indistinguishable.
 
 \subsection{Operational Considerations}
 
@@ -1872,31 +1960,54 @@ community knowledge.
 
 \section{Conclusion}\label{sec:conclusion}
 
-This paper presented a multi-agent RAG architecture for answering
-software update questions using software ecosystem documents. The
-architecture decomposes query rewriting, retrieval, evaluation, and
-orchestration into specialized agents connected through an adaptive
-feedback loop and persistent memory.
+This paper presented a multi-agent RAG architecture for answering software
+update questions from software ecosystem documents, and an account of what
+happened when we measured it properly.
 
-Evaluation on 50 real software update questions showed a 17.2\%
-improvement in retrieval quality compared with a single-agent baseline
-($t(49)=2.32$, $p=0.020$). The adaptive feedback mechanism produced an
-additional 9.3\% improvement in retrieval quality across successive
-interactions without human feedback. A supplementary evaluation on ten
-live questions produced four fully correct answers and six partially
-correct answers. No unsupported version numbers, release dates, or
-software update claims were observed during this evaluation.
+Evaluated on a keyword-overlap retrieval score of our own design, the
+architecture improved on a single-agent baseline by 17.2\% ($t(49)=2.32$,
+$p=0.020$). Evaluated with standard IR metrics over pooled relevance judgments,
+it lost to the same baseline by roughly a factor of five. The disagreement was
+not a metric artifact: the query-rewriting agent's output was being issued to
+every retrieval endpoint \emph{in place of} the user's question, and 22 of the
+23 relevant documents the baseline retrieved were never retrieved by the
+multi-agent pipeline at all. Three progressively stronger rerankers raised MRR
+from 0.250 to 0.625 while leaving nDCG@3 near 0.19, because no ranking function
+can promote a document that was never a candidate.
 
-The results suggest that architectural decomposition can improve
-retrieval quality for software update question answering by separating
-query rewriting, retrieval, and evaluation into dedicated agents. The
-study also demonstrates that retrieval-level feedback can be used to
-adapt query generation without model retraining.
+Issuing both phrasings and unioning the candidate pools resolves it. On a
+100-question benchmark spanning 24 software ecosystems, the fetch-time loss
+falls from 96\% to 14.7\%, and the repaired pipeline reaches nDCG@3 of 0.865
+against the baseline's 0.869 --- parity, within overlapping confidence
+intervals, at approximately twice the latency. We report this rather than the
+improvement our original metric showed. On this benchmark, in this domain,
+architectural decomposition did not improve retrieval quality over a
+well-configured single-agent baseline; what the original evaluation measured was
+the correlation between a bespoke metric and the vocabulary its own rewriting
+agent produced.
 
-Future work includes evaluation against additional RAG baselines,
-larger-scale studies using more diverse software ecosystems, and the
-replacement of heuristic retrieval scoring and vendor matching
-mechanisms with learned approaches.
+Two further results bear on how such systems should be evaluated. An apparent
+0.23 faithfulness deficit for the multi-agent architecture proved to be an
+artifact of answer format --- a structured template judged against fluent prose
+--- and vanished when the same retrieved documents were synthesized through the
+baseline's prompt. And the failure that caused all of this was invisible at the
+component level: every agent performed its own task correctly, and only the
+retrieved set revealed the defect. We suggest that agentic pipelines be
+instrumented to expose intermediate state, in particular the pre-ranking
+candidate set, so that ``mis-ranked'' and ``never retrieved'' remain separable
+diagnoses.
+
+We release the architecture, the evaluation harness, the ranking and fetching
+ablation arms, and a 300-question benchmark spanning 24 software ecosystems and
+five question categories, mined from live release, advisory, and community
+sources.
+
+Future work includes head-to-head comparison against Self-RAG, CRAG, and
+Adaptive-RAG through the FlashRAG and RAGLAB toolkits; an independent judge to
+remove the model-family overlap between judge and system; evaluation across
+longer interaction histories to establish whether retrieval-level adaptation
+scales; and replacement of the heuristic evaluator thresholds and vendor
+matching with learned components.
 
 \section*{Acknowledgments}
 
