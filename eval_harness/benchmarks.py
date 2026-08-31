@@ -41,6 +41,7 @@ import json
 import os
 import re
 import string
+from collections import OrderedDict
 from typing import Dict, Iterable, List, Optional, Sequence
 
 from .config import ROOT
@@ -443,6 +444,42 @@ def load_benchmark(path: str, fmt: str = "crag", limit: int = 0,
     if limit and limit > 0:
         records = records[:limit]
     return records
+
+
+def stratified_limit(records: Sequence[dict], limit: int,
+                     key: str = "category") -> List[dict]:
+    """Take `limit` records while preserving the balance of `key`.
+
+    A plain head slice destroys the stratification the benchmark was built for.
+    data/benchmark_300.json is written as five contiguous 60-question blocks in
+    the order releases, bugs, security, community, general, so `--limit 100`
+    yields 60 releases + 40 bugs and *zero* security, community or general
+    questions -- two of five categories, reported as if it were the benchmark.
+
+    This walks the groups round-robin in first-appearance order, taking each
+    group's records in file order. That is deterministic (no RNG, no seed to
+    thread through), it keeps within-group ordering so a `--resume` of a
+    smaller limit stays a prefix, and it degrades gracefully when groups are
+    uneven: a group that runs out simply stops contributing.
+    """
+    if not limit or limit <= 0 or limit >= len(records):
+        return list(records)
+    groups: "OrderedDict[object, List[dict]]" = OrderedDict()
+    for r in records:
+        groups.setdefault(r.get(key), []).append(r)
+    out: List[dict] = []
+    while len(out) < limit:
+        progressed = False
+        for g in groups.values():
+            if not g:
+                continue
+            out.append(g.pop(0))
+            progressed = True
+            if len(out) >= limit:
+                break
+        if not progressed:
+            break
+    return out
 
 
 def score_run(per_query: Iterable[dict],
