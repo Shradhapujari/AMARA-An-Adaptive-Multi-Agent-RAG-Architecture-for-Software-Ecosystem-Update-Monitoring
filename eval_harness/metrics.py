@@ -14,6 +14,26 @@ reviewers actually expect. All operate on a ranked list of doc_ids plus a
 `mean_ci(values)` returns (mean, half-width of 95% CI) so result tables can
 carry error bars — the conference talks repeatedly stressed statistical
 reporting over single point numbers.
+
+Scope of the denominators (read before quoting an absolute number)
+-----------------------------------------------------------------
+`run_eval` judges only the documents the run's own systems retrieved, so the
+`qrels` handed to these functions is the *per-query pool for that run*, not a
+fixed judged corpus. Consequences:
+
+  * `recall_at_k`'s denominator is "relevant docs inside this run's pool".
+    Measured on validation_gt.json (n=10), that denominator is 1-3 documents,
+    while the accumulated judgment cache holds 2-10 relevant docs for the same
+    questions. Reported recall is therefore an upper bound, and a query where
+    the pool contains exactly one relevant document scores recall@1 = 1.0.
+  * `ndcg_at_k`'s IDCG comes from the same pool, so a system cannot be
+    penalised for relevant documents no arm in the run retrieved.
+  * Both are still valid for the *paired within-run* comparison every arm in a
+    run shares one pool. They are NOT comparable across runs, and they are not
+    comparable to published numbers computed against a fixed corpus.
+
+To get corpus-relative numbers, score against the union of all judgments for
+each question (`qrels_cache_snapshot.json`) rather than the per-run pool.
 """
 
 from __future__ import annotations

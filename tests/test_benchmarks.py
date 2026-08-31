@@ -198,3 +198,114 @@ class TestAbstentionOrdering:
     def test_strong_marker_short_circuits(self):
         assert B.is_abstention("I don't know.", strong_only=True)
         assert not B.is_abstention("The severity is unknown.", strong_only=True)
+
+
+class TestStratifiedLimit:
+    """`--limit N` must not silently drop whole categories.
+
+    data/benchmark_300.json is five contiguous 60-question blocks in the order
+    releases, bugs, security, community, general, so a head slice of 100 yields
+    60 releases + 40 bugs and nothing else.
+    """
+
+    def _blocked(self):
+        rows = []
+        for cat, n in (("releases", 6), ("bugs", 6), ("security", 6)):
+            rows += [{"id": f"{cat}{i}", "category": cat} for i in range(n)]
+        return rows
+
+    def test_head_slice_loses_categories(self):
+        rows = self._blocked()
+        head = rows[:6]
+        assert {r["category"] for r in head} == {"releases"}
+
+    def test_stratified_keeps_every_category(self):
+        rows = self._blocked()
+        out = B.stratified_limit(rows, 6, "category")
+        assert len(out) == 6
+        assert {r["category"] for r in out} == {"releases", "bugs", "security"}
+
+    def test_balance_is_even_when_divisible(self):
+        out = B.stratified_limit(self._blocked(), 9, "category")
+        counts = {}
+        for r in out:
+            counts[r["category"]] = counts.get(r["category"], 0) + 1
+        assert counts == {"releases": 3, "bugs": 3, "security": 3}
+
+    def test_is_deterministic(self):
+        rows = self._blocked()
+        assert ([r["id"] for r in B.stratified_limit(rows, 7, "category")]
+                == [r["id"] for r in B.stratified_limit(rows, 7, "category")])
+
+    def test_smaller_limit_is_a_prefix_of_larger(self):
+        """So resuming a run at a bigger limit reuses the earlier questions."""
+        rows = self._blocked()
+        small = [r["id"] for r in B.stratified_limit(rows, 6, "category")]
+        big = [r["id"] for r in B.stratified_limit(rows, 12, "category")]
+        assert big[:6] == small
+
+    def test_limit_at_or_above_size_returns_all(self):
+        rows = self._blocked()
+        assert len(B.stratified_limit(rows, len(rows), "category")) == len(rows)
+        assert len(B.stratified_limit(rows, 999, "category")) == len(rows)
+        assert len(B.stratified_limit(rows, 0, "category")) == len(rows)
+
+    def test_uneven_groups_degrade_gracefully(self):
+        rows = ([{"id": f"a{i}", "category": "a"} for i in range(5)]
+                + [{"id": "b0", "category": "b"}])
+        out = B.stratified_limit(rows, 4, "category")
+        assert len(out) == 4
+        assert sum(1 for r in out if r["category"] == "b") == 1
+
+    def test_real_benchmark_first_100_vs_stratified(self):
+        import json, os
+        from eval_harness.config import ROOT
+        path = os.path.join(ROOT, "data", "benchmark_300.json")
+        if not os.path.exists(path):
+            pytest.skip("benchmark_300.json not present")
+        rows = json.load(open(path))
+        head_cats = {r["category"] for r in rows[:100]}
+        strat = B.stratified_limit(rows, 100, "category")
+        strat_cats = {r["category"] for r in strat}
+        assert len(head_cats) == 2, f"expected head slice to lose categories, got {head_cats}"
+        assert len(strat_cats) == 5, f"stratified should keep all 5, got {strat_cats}"
+        assert len(strat) == 100
+
+
+class TestStratifiedLimitCompositeKey:
+    """Balancing one field is not enough when the blocks nest.
+
+    Each category block in benchmark_300.json is itself ordered by ecosystem,
+    so `--stratify category` takes the first 20 of each 60-block and sees only
+    ~10 of 24 ecosystems. A composite key balances the cross product.
+    """
+
+    def _nested(self):
+        rows = []
+        for cat in ("releases", "bugs"):
+            for eco in ("ubuntu", "chrome", "docker", "npm"):
+                rows += [{"id": f"{cat}-{eco}-{i}", "category": cat,
+                          "ecosystem": eco} for i in range(3)]
+        return rows
+
+    def test_single_key_collapses_the_nested_field(self):
+        out = B.stratified_limit(self._nested(), 4, "category")
+        assert len({r["category"] for r in out}) == 2
+        assert len({r["ecosystem"] for r in out}) < 4
+
+    def test_composite_key_covers_both(self):
+        out = B.stratified_limit(self._nested(), 8, "category,ecosystem")
+        assert len(out) == 8
+        assert len({r["category"] for r in out}) == 2
+        assert len({r["ecosystem"] for r in out}) == 4
+
+    def test_whitespace_and_single_field_still_work(self):
+        rows = self._nested()
+        a = B.stratified_limit(rows, 6, "category")
+        b = B.stratified_limit(rows, 6, " category ")
+        assert [r["id"] for r in a] == [r["id"] for r in b]
+
+    def test_composite_is_deterministic(self):
+        rows = self._nested()
+        assert ([r["id"] for r in B.stratified_limit(rows, 7, "category,ecosystem")]
+                == [r["id"] for r in B.stratified_limit(rows, 7, "category,ecosystem")])

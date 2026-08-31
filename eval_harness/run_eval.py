@@ -10,21 +10,42 @@ Usage:
     python -m eval_harness.run_eval                       # defaults from config
     python -m eval_harness.run_eval --dataset table_50_questions.json --limit 20
     python -m eval_harness.run_eval --generators marag,raw:ollama:mistral
+    # answer-comparable head-to-head: both arms synthesise with the same model
+    python -m eval_harness.run_eval --generators marag:ollama:mistral,single_agent
+    # continue an interrupted run: finished questions are not re-generated
+    python -m eval_harness.run_eval --resume run_1788132228_7cdc5685d75a \
+        --dataset data/benchmark_300.json
     python -m eval_harness.run_eval --judge ollama:minimax-m2.7:cloud
 
 Outputs a timestamped folder under results/<run_id>/ containing:
     config.json, manifest.json, per_query.jsonl, aggregate.csv,
-    qrels.json, report.md, and PNG comparison plots.
+    qrels.json, qrels_cache_snapshot.json, report.md, and PNG plots.
+
+`qrels.json` holds the judgments that scored THIS run, as
+{query_id: {doc_id: grade}}. `qrels_cache_snapshot.json` is the accumulating
+cross-run judgment cache and is provenance only -- do not score with it.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
+import re
+import sys
 import time
-from typing import Dict, List
+from collections import Counter
+from typing import Dict, List, Sequence
+
+# corpus_snapshot and rerank live at the project root, next to the package.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import corpus_snapshot
+import rerank
 
 from .config import EvalConfig
 from .dataset import load_dataset, dataset_hash
@@ -37,14 +58,36 @@ from . import report as report_mod
 
 QRELS_CACHE = "qrels_cache.json"
 
+# A cache entry must be keyed by the QUESTION, not by its position in a file.
+# Keying on rec["id"] silently mixed datasets: benchmark_300 ids run 1..300 and
+# validation_gt ids run 1..10, both pool documents from the same live APIs, so
+# the label judged for validation question 3 was reused for benchmark question
+# 3 — a different question about a different product. Hashing the query text
+# makes the key dataset-independent, and legitimately shares a label when two
+# datasets happen to ask the same question about the same document.
+_KEY_RE = re.compile(r"^[0-9a-f]{12}:[0-9a-f]{12}$")
+
+
+def qrels_key(query: str, doc_id: str) -> str:
+    """Cache key for one (question, document) relevance judgment."""
+    qh = hashlib.sha1(query.strip().lower().encode("utf-8", "ignore")).hexdigest()[:12]
+    return f"{qh}:{doc_id}"
+
 
 def _load_qrels_cache(results_dir: str) -> dict:
     p = os.path.join(results_dir, QRELS_CACHE)
     if os.path.exists(p):
         try:
-            return json.load(open(p))
+            raw = json.load(open(p))
         except Exception:
             return {}
+        cache = {k: v for k, v in raw.items() if _KEY_RE.match(k)}
+        dropped = len(raw) - len(cache)
+        if dropped:
+            print(f"[harness] qrels cache: dropped {dropped} entries keyed by "
+                  f"dataset position (ambiguous across datasets); they will be "
+                  f"re-judged and re-cached by question")
+        return cache
     return {}
 
 
@@ -53,20 +96,118 @@ def _save_qrels_cache(results_dir: str, cache: dict) -> None:
     json.dump(cache, open(os.path.join(results_dir, QRELS_CACHE), "w"), indent=1)
 
 
+PER_QUERY = "per_query.jsonl"
+
+
+def stratify_summary(records: Sequence[dict], key: str) -> str:
+    """
+    Report the mix a stratified selection actually produced, per field.
+
+    `key` may be composite ("category,ecosystem"). Looking the whole key up as
+    one field -- `r.get("category,ecosystem")` -- returns None for every record
+    and prints `None=100`, which reads as a successful stratification while
+    saying nothing. Each field is counted separately instead; a field with many
+    values is summarised by its spread rather than listed in full.
+    """
+    fields = [f.strip() for f in str(key).split(",") if f.strip()] or ["category"]
+    parts = []
+    for f in fields:
+        mix = Counter(r.get(f) for r in records)
+        if len(mix) <= 8:
+            body = ", ".join(f"{k}={v}" for k, v in
+                             sorted(mix.items(), key=lambda kv: str(kv[0])))
+        else:
+            body = (f"{len(mix)} distinct, "
+                    f"{min(mix.values())}-{max(mix.values())} each")
+        parts.append(f"{f}: {body}")
+    return "; ".join(parts)
+
+
+def _read_finished(run_dir: str, systems: List[str]) -> tuple:
+    """
+    Read a previous run's streamed rows back.
+
+    Returns (rows, done_ids). Only questions with a row for EVERY system in
+    this run count as done: a question interrupted halfway through its systems
+    is re-run whole, and its partial rows are dropped, so resuming cannot
+    produce two rows for one (question, system).
+    """
+    path = os.path.join(run_dir, PER_QUERY)
+    if not os.path.exists(path):
+        return [], set()
+    by_q: Dict[str, Dict[str, dict]] = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a row torn by a kill mid-write
+            by_q.setdefault(str(row.get("query_id")), {})[row.get("system")] = row
+    want = set(systems)
+    rows, done = [], set()
+    for qid, per_system in by_q.items():
+        if want.issubset(per_system):
+            done.add(qid)
+            rows.extend(per_system[s] for s in systems)
+    return rows, done
+
+
+def _compact(run_dir: str, rows: List[dict]) -> None:
+    """Rewrite per_query.jsonl as exactly the rows being kept."""
+    with open(os.path.join(run_dir, PER_QUERY), "w") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+
+
 def run(cfg: EvalConfig) -> str:
     random.seed(cfg.seed)
     os.makedirs(cfg.results_dir, exist_ok=True)
 
+    # Freeze the corpus before a single system is built. An ablation whose
+    # sources move between arms measures the sources, not the arms.
+    snap = corpus_snapshot.activate(cfg.corpus)
+    if snap is not None:
+        print(f"[harness] corpus {snap.mode}: {snap.dir}")
+    else:
+        print("[harness] corpus: LIVE (runs are not comparable to each other; "
+              "set MARAG_CORPUS=record:<dir> then replay:<dir> for an ablation)")
+
+    # With --stratify, load everything and select afterwards: both loaders
+    # implement `limit` as a head slice, which is what drops categories.
+    _load_limit = 0 if cfg.stratify else cfg.limit
     if cfg.benchmark:
         records = bench_mod.load_benchmark(cfg.dataset, fmt=cfg.benchmark,
-                                           limit=cfg.limit)
+                                           limit=_load_limit)
         print(f"[harness] benchmark mode: {cfg.benchmark} "
               f"({len(records)} questions with ground truth)")
     else:
-        records = load_dataset(cfg.dataset, cfg.limit)
+        records = load_dataset(cfg.dataset, _load_limit)
+    if cfg.stratify and cfg.limit:
+        before = len(records)
+        records = bench_mod.stratified_limit(records, cfg.limit, cfg.stratify)
+        print(f"[harness] stratified {cfg.limit}/{before} by {cfg.stratify} -> "
+              + stratify_summary(records, cfg.stratify))
     ds_hash = dataset_hash(records)
-    run_id = "run_" + str(int(time.time())) + "_" + ds_hash
-    run_dir = os.path.join(cfg.results_dir, run_id)
+    if cfg.resume:
+        run_dir = (cfg.resume if os.path.isabs(cfg.resume)
+                   else os.path.join(cfg.results_dir, cfg.resume))
+        run_dir = run_dir.rstrip(os.sep)
+        run_id = os.path.basename(run_dir)
+        if not os.path.isdir(run_dir):
+            raise SystemExit(f"--resume: no such run dir: {run_dir}")
+        # The dataset hash is in the run id. Resuming a run with a different
+        # dataset would silently mix two question sets in one artifact.
+        if not run_id.endswith(ds_hash):
+            raise SystemExit(
+                f"--resume: {run_id} was run on a different dataset "
+                f"(its hash vs this dataset's {ds_hash}); "
+                f"start a new run instead of mixing them")
+    else:
+        run_id = "run_" + str(int(time.time())) + "_" + ds_hash
+        run_dir = os.path.join(cfg.results_dir, run_id)
     os.makedirs(run_dir, exist_ok=True)
     print(f"\n[harness] dataset={cfg.dataset} questions={len(records)} hash={ds_hash}")
     print(f"[harness] run dir: {run_dir}")
@@ -87,9 +228,37 @@ def run(cfg: EvalConfig) -> str:
     print(f"[harness] judge: {judge.spec} ({'on' if judging else 'OFF — metrics limited'})")
 
     qrels_cache = _load_qrels_cache(cfg.results_dir)
+    # Rows are streamed to per_query.jsonl as each question finishes rather
+    # than written once at the end. A 300-question run is hours long; writing
+    # only at the end meant an interruption lost every generated answer while
+    # keeping the (cheap, cached) judgments — 67 questions were lost that way.
     per_query: List[dict] = []
+    done_ids: set = set()
+    if cfg.resume:
+        per_query, done_ids = _read_finished(run_dir, [g.name for g in gens])
+        _compact(run_dir, per_query)
+        print(f"[harness] resuming {run_id}: {len(done_ids)} questions already "
+              f"scored for all {len(gens)} systems, "
+              f"{len(records) - len(done_ids)} to go")
+    stream = open(os.path.join(run_dir, PER_QUERY), "a")
+    # The judgments actually used to score THIS run, per query. Kept separate
+    # from `qrels_cache`: the cache accumulates across every run and dataset
+    # that shares the results dir, so dumping it as the run's qrels made the
+    # run's own numbers unreproducible from its own artifacts.
+    qrels_used: Dict[str, Dict[str, int]] = {}
+    if cfg.resume:
+        qpath = os.path.join(run_dir, "qrels.json")
+        if os.path.exists(qpath):
+            try:
+                prior = json.load(open(qpath))
+                qrels_used = {k: v for k, v in prior.items()
+                              if k in done_ids and isinstance(v, dict)}
+            except Exception:
+                pass
 
     for qi, rec in enumerate(records, 1):
+        if str(rec["id"]) in done_ids:
+            continue
         query = rec["query"]
         print(f"\n[{qi}/{len(records)}] {query[:80]}")
         sys_outputs: Dict[str, dict] = {}
@@ -104,22 +273,30 @@ def run(cfg: EvalConfig) -> str:
             print(f"    {g.name:28s} {len(out['docs'])} docs  {out['latency_s']}s")
 
         # ---- pool retrieved docs and judge relevance (cached) -----------
+        # The judging pool is the union of what the systems *returned*. With
+        # judge_pool it widens to what they *considered*, which is what makes
+        # pool recall -- the ceiling reranking could reach -- computable.
         pool: Dict[str, dict] = {}
         for out in sys_outputs.values():
             for d in out["docs"]:
                 pool.setdefault(d["doc_id"], d)
+            if cfg.judge_pool:
+                for d in out.get("pool") or []:
+                    pool.setdefault(d["doc_id"], d)
         qrels: Dict[str, int] = {}
         if judging:
             for did, d in pool.items():
-                ck = f"{rec['id']}:{did}"
+                ck = qrels_key(query, did)
                 if ck in qrels_cache:
                     qrels[did] = qrels_cache[ck]
                 else:
                     g_label = judge.relevance_label(query, d)
                     qrels[did] = g_label
                     qrels_cache[ck] = g_label
+        qrels_used[str(rec["id"])] = dict(qrels)
 
         # ---- per-system metrics -----------------------------------------
+        rows_this_query: List[dict] = []
         for name, out in sys_outputs.items():
             ranked = [d["doc_id"] for d in out["docs"]]
             ir = retrieval_metrics(ranked, qrels, cfg.ks) if (judging and ranked) else {}
@@ -132,7 +309,21 @@ def run(cfg: EvalConfig) -> str:
             if cfg.benchmark and rec.get("ground_truth"):
                 bench_label = bench_mod.score_prediction(out["answer"],
                                                          rec["ground_truth"])
-            per_query.append({
+            pool_ids = [d["doc_id"] for d in (out.get("pool") or [])]
+            # Ceiling on recall@k for this fetch: the share of judged-relevant
+            # documents that were in the pool at all. A low pool recall with a
+            # high in-pool precision means the reranker is doing its job and the
+            # fetch is not -- no reranker can promote a document it never saw.
+            #
+            # Only meaningful with judge_pool. Without it the judged set is drawn
+            # from the returned top_k alone, every gold document is in the pool
+            # by construction, and the number is a tautological 1.0 -- which is
+            # worse than absent, because it reads as a finding.
+            pool_recall = None
+            if cfg.judge_pool:
+                gold = {d for d, g in qrels.items() if g > 0}
+                pool_recall = (len(gold & set(pool_ids)) / len(gold)) if (gold and pool_ids) else None
+            rows_this_query.append({
                 "benchmark_label": bench_label,
                 "query_id": rec["id"],
                 "query": query,
@@ -140,24 +331,66 @@ def run(cfg: EvalConfig) -> str:
                 "system": name,
                 "n_docs": len(out["docs"]),
                 "doc_ids": ranked,
+                "pool_size": len(pool_ids),
+                "pool_doc_ids": pool_ids,
+                "pool_recall": pool_recall,
+                "rerank_spec": out.get("rerank_spec", ""),
+                "rerank_degraded": out.get("rerank_degraded", False),
                 "latency_s": out["latency_s"],
                 "self_quality": out.get("self_quality"),
                 "answer": out["answer"],
+                # Only set by the synthesising multi-agent arm: which model wrote
+                # the scored answer, and the template answer it replaced.
+                "synth_model": out.get("synth_model"),
+                "template_answer": out.get("template_answer"),
                 "ir": ir,
                 "answer_scores": ans,
             })
+
+        # Persist this question before starting the next one: the run is now
+        # restartable with --resume, losing at most the question in flight.
+        per_query.extend(rows_this_query)
+        for row in rows_this_query:
+            stream.write(json.dumps(row) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
         _save_qrels_cache(cfg.results_dir, qrels_cache)
+        json.dump(qrels_used, open(os.path.join(run_dir, "qrels.json"), "w"), indent=1)
 
     # ---- persist + report ----------------------------------------------
-    with open(os.path.join(run_dir, "per_query.jsonl"), "w") as f:
-        for row in per_query:
-            f.write(json.dumps(row) + "\n")
-    json.dump(qrels_cache, open(os.path.join(run_dir, "qrels.json"), "w"), indent=1)
+    # per_query.jsonl was streamed during the loop; nothing to write here.
+    stream.close()
+    # qrels.json = exactly what scored this run, keyed by query id, so
+    # aggregate.csv can be recomputed from the artifacts alone. Verified: the
+    # previous version dumped `qrels_cache` (every judgment ever made in this
+    # results dir), which reproduced only 2 of 20 per-query metric rows because
+    # the recall/nDCG denominators came out of a much larger judged pool.
+    json.dump(qrels_used, open(os.path.join(run_dir, "qrels.json"), "w"), indent=1)
+    # The accumulating cross-run cache, snapshotted for provenance only.
+    json.dump(qrels_cache,
+              open(os.path.join(run_dir, "qrels_cache_snapshot.json"), "w"), indent=1)
     cfg_dict = {k: getattr(cfg, k) for k in vars(cfg)}
     cfg_dict["systems_evaluated"] = [g.name for g in gens]
     cfg_dict["judge_active"] = judging
     cfg_dict["dataset_hash"] = ds_hash
     cfg_dict["n_questions"] = len(records)
+    # Which arm this run actually is. Reading it back off the environment at
+    # write time would be a guess; ask the reranker the harness really used.
+    _rr = rerank.get_reranker()
+    cfg_dict["rerank_requested"] = os.environ.get("MARAG_RERANK", rerank.DEFAULT_SPEC)
+    cfg_dict["rerank_spec"] = _rr.spec
+    cfg_dict["rerank_degraded"] = bool(_rr.degraded)
+    cfg_dict["corpus"] = snap.stats() if snap is not None else {"mode": "live",
+                                                                "frozen": False}
+    if snap is not None:
+        st = cfg_dict["corpus"]
+        print(f"[harness] corpus {st['mode']}: {st['hits']} hits, "
+              f"{st['misses']} misses, {st['corpus_misses']} of them on corpus "
+              f"hosts -> frozen={st['frozen']}")
+        if st["corpus_misses"]:
+            print("[harness] WARNING: corpus hosts were read live during replay; "
+                  "this run is NOT comparable to other arms. "
+                  f"misses by host: {st['misses_by_host']}")
     json.dump(cfg_dict, open(os.path.join(run_dir, "config.json"), "w"), indent=2)
 
     if cfg.benchmark:
@@ -196,16 +429,31 @@ def _parse_args() -> EvalConfig:
                    choices=["", "crag", "generic"],
                    help="score against an established benchmark file "
                         "(deterministic correct/incorrect/missing labelling)")
+    p.add_argument("--stratify", default=cfg.stratify, metavar="FIELD",
+                   help="make --limit keep the mix of FIELD (e.g. 'category') "
+                        "instead of taking the first N in file order")
     p.add_argument("--top-k", type=int, default=cfg.top_k)
     p.add_argument("--seed", type=int, default=cfg.seed)
+    p.add_argument("--resume", default=cfg.resume,
+                   metavar="RUN_DIR",
+                   help="continue an interrupted run: reuse that run dir and "
+                        "skip questions already scored for every system")
+    p.add_argument("--judge-pool", action="store_true", default=cfg.judge_pool,
+                   help="judge every pre-rerank candidate, enabling pool recall")
+    p.add_argument("--corpus", default=cfg.corpus,
+                   help="record:<dir> | replay:<dir> — freeze the live sources "
+                        "so arms of an ablation see identical documents")
     a = p.parse_args()
     cfg.dataset = a.dataset
+    cfg.stratify = a.stratify
     cfg.limit = a.limit
     cfg.generators = [s.strip() for s in a.generators.split(",") if s.strip()]
     cfg.judge = a.judge
     cfg.benchmark = a.benchmark
     cfg.top_k = a.top_k
     cfg.seed = a.seed
+    cfg.judge_pool = a.judge_pool
+    cfg.corpus = a.corpus
     return cfg
 
 

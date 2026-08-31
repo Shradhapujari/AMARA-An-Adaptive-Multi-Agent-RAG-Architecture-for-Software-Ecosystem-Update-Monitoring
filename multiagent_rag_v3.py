@@ -1335,6 +1335,13 @@ Rewritten query:"""
 class RetrieverAgent:
     name = "📚  Retriever Agent"
 
+    # Diagnostics from the most recent run(). Declared here so a caller can read
+    # them unconditionally, including after a run that returned early.
+    last_pool: list = []
+    last_rank_query: str = ""
+    last_rerank_spec: str = ""
+    last_rerank_degraded: bool = False
+
     def run(self, rewritten_query: str, top_k: int = 4, original_query: str = "") -> list:
         print(f"\n  {self.name}")
         bar()
@@ -1443,10 +1450,19 @@ class RetrieverAgent:
 
         pool = tier1 + tier2
         _rank_query = original_query if original_query else rewritten_query
+        # Expose the pre-rerank candidate pool. A reranker can only reorder what
+        # it is given, so "did the reranker fail?" and "was the document never
+        # fetched?" are different diagnoses with different fixes -- and they are
+        # indistinguishable from the final top-k alone. The harness reads this
+        # to report pool recall alongside recall@k.
+        self.last_pool = list(pool)
+        self.last_rank_query = _rank_query
         # One reranker per process. EmbeddingReranker memoises embeddings and
         # make_reranker() spends an extra probe embedding on every call, so
         # building one per retrieval threw the cache away before it could hit.
         _reranker = _rerank.get_reranker()
+        self.last_rerank_spec = _reranker.spec
+        self.last_rerank_degraded = bool(_reranker.degraded)
         print(f"  Ranking  : {_reranker.spec} over {len(pool)} candidates "
               f"(query: {'original' if original_query else 'rewritten'})")
         if _reranker.degraded:
