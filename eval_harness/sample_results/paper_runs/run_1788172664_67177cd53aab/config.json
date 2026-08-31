@@ -1,0 +1,44 @@
+{
+  "generators": [
+    "marag",
+    "single_agent"
+  ],
+  "judge": "ollama:llama3.1",
+  "dataset": "data/benchmark_100.json",
+  "limit": 0,
+  "stratify": "",
+  "benchmark": "",
+  "top_k": 4,
+  "ks": [
+    1,
+    3,
+    5
+  ],
+  "seed": 42,
+  "judge_pool": true,
+  "corpus": {
+    "mode": "replay",
+    "dir": "data/corpus_snapshot_b100_p5",
+    "hits": 2481,
+    "misses": 362,
+    "recorded": 362,
+    "misses_by_host": {
+      "localhost": 362
+    },
+    "corpus_misses": 0,
+    "frozen": true,
+    "strict": false
+  },
+  "resume": "",
+  "results_dir": "/Users/shradha/Adaptive-Multi-Agent-RAG-Architecture-for-Software-Ecosystem-Update-Monitoring/results",
+  "systems_evaluated": [
+    "marag",
+    "single_agent"
+  ],
+  "judge_active": true,
+  "dataset_hash": "67177cd53aab",
+  "n_questions": 100,
+  "rerank_requested": "none",
+  "rerank_spec": "none",
+  "rerank_degraded": false
+}

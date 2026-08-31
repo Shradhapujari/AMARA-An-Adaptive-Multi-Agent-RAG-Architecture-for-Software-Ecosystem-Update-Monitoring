@@ -1329,11 +1329,13 @@ question favours it. The three ties are drawn rather than dropped because they
 are why the exact test has seven usable pairs, which fixes the smallest
 attainable two-sided $p$ at $2/2^{7}=0.0156$. Regenerated from the run's
 per-query rows by \texttt{scripts/paper\_figures.py}.}
-\Description{Per-question scatter of the retrieval-metric difference between
-the multi-agent pipeline and the single-agent baseline, one mark per
-evaluation question, sorted by that difference. Seven marks fall on the side
-favouring the single-agent baseline, three sit on the zero line as ties, and
-none falls on the side favouring the multi-agent pipeline.}
+\Description{Horizontal stem chart of the per-question nDCG@3 difference
+between the multi-agent pipeline and the single-agent baseline, one stem per
+evaluation question, sorted by that difference. Seven stems extend left of
+zero, towards the side favouring the single-agent baseline, four of them
+reaching the axis minimum of minus one; three questions are tied and appear as
+open squares on the zero line; no stem extends right of zero. A dashed vertical
+rule marks the mean difference of minus 0.620.}
 \label{fig:inversion-per-query}
 \end{figure}
 
@@ -1447,6 +1449,60 @@ evaluator. Notably, the multi-agent pipeline had all along been retrieving
 relevant documents the baseline missed; its candidate set was not worse so much
 as \emph{different and smaller}, which is why unioning rather than replacing
 recovers the loss.
+
+\subsubsection*{The divergence signature disappears once the defect is repaired}
+
+Table~\ref{tab:ranking-ablation} carries two weaknesses that the diagnosis rests
+on and that ten questions cannot remove: its rows come from separate runs against
+live sources, so they are not strictly paired, and the pattern it reports could in
+principle be an artifact of the sample. We therefore repeated the ranking
+ablation on the repaired pipeline over the 100-question benchmark, against a
+corpus snapshot recorded once and then replayed, so that the three arms differ
+only in the ranking function and every arm sees byte-identical documents.
+Table~\ref{tab:scaled-ablation} reports it.
+
+\begin{table}[t]
+\caption{Ranking ablation repeated on the repaired pipeline, $n=100$, against a
+frozen corpus snapshot replayed identically for all three arms
+(\texttt{corpus\_misses}~$=0$, \texttt{frozen}~$=$~true). Unlike
+Table~\ref{tab:ranking-ablation} these rows are strictly paired. With the union
+fetch in place, stronger ranking now moves nDCG@3 and MRR \emph{together} ---
+the divergence that localized the defect is absent, which is what the diagnosis
+predicts.}
+\label{tab:scaled-ablation}
+\begin{tabular}{llrrrr}
+\toprule
+Ranking function & System & nDCG@3 & nDCG@5 & MRR & Recall@5 \\
+\midrule
+None            & multi-agent  & 0.486 & 0.473 & 0.618 & 0.341 \\
+                & single-agent & 0.507 & 0.493 & 0.646 & 0.371 \\
+Okapi BM25      & multi-agent  & 0.627 & 0.596 & 0.793 & 0.387 \\
+                & single-agent & 0.631 & 0.606 & 0.806 & 0.396 \\
+Embedding cosine & multi-agent  & \textbf{0.656} & \textbf{0.615} & \textbf{0.817} & 0.387 \\
+                 & single-agent & 0.646 & 0.612 & 0.808 & 0.388 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The contrast with panel~(a) is the point. There, three successively stronger
+ranking functions raised MRR by 0.375 while leaving nDCG@3 within 0.043 of where
+it started: ranking was working and the answer was not in the candidate set to be
+ranked. Here the same progression raises nDCG@3 by 0.170 and MRR by 0.198 on the
+multi-agent arm --- the two measures move together, which is what ranking
+improvements look like when the candidate set does contain the answer. A
+diagnosis of the form ``this metric pattern indicates a fetch defect rather than
+a ranking defect'' is falsifiable in exactly this way, and the pattern is absent
+once the fetch is repaired.
+
+Two further readings are available from the same table. The candidate-pool
+ceiling separates the two systems consistently --- mean pool recall 0.981 for the
+multi-agent arm against 0.839 for the single-agent baseline, stable across all
+three ranking functions --- so the union fetch does raise the ceiling reranking
+can reach, which is the mechanism Section~\ref{sec:union-fetch} claims. And the
+choice of ranking function matters more than the choice of architecture at this
+scale: moving from no reranking to embedding cosine is worth 0.170 nDCG@3, where
+the gap between the two architectures under any fixed ranking function never
+exceeds 0.021.
 
 \subsection{Evaluation at Scale}\label{sec:scaled-eval}
 
