@@ -88,6 +88,10 @@ def main(argv: list[str]) -> int:
             admissible.append(r)
 
     # ---- does the freeze actually hold? -------------------------------
+    # Run over every run, not only admissible ones. This check is *most*
+    # informative when the freeze flag already failed: it says whether the leak
+    # actually changed the documents the arms saw, or was cosmetic.
+    admissible = runs if len(admissible) < 2 else admissible
     if len(admissible) > 1:
         print("\n" + "=" * 78)
         print("FROZEN-CORPUS CHECK — identical pre-rerank pool across arms")
