@@ -22,3 +22,10 @@ venv/
 
 # frozen corpus recordings (large, regenerable from the live APIs)
 data/corpus_snapshot*/
+
+# LaTeX build products (regenerable with tectonic)
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.xdv
+paper/*.pdf

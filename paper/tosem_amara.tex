@@ -98,6 +98,36 @@ harness, and a 300-question benchmark mined from live release, advisory, and
 community sources.
 \end{abstract}
 
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10002951.10003317.10003338</concept_id>
+       <concept_desc>Information systems~Retrieval models and ranking</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10002951.10003317.10003359</concept_id>
+       <concept_desc>Information systems~Evaluation of retrieval results</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10011007.10011074.10011081</concept_id>
+       <concept_desc>Software and its engineering~Software maintenance tools</concept_desc>
+       <concept_significance>300</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10010147.10010178.10010179</concept_id>
+       <concept_desc>Computing methodologies~Natural language processing</concept_desc>
+       <concept_significance>300</concept_significance>
+       </concept>
+ </ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Information systems~Retrieval models and ranking}
+\ccsdesc[500]{Information systems~Evaluation of retrieval results}
+\ccsdesc[300]{Software and its engineering~Software maintenance tools}
+\ccsdesc[300]{Computing methodologies~Natural language processing}
+
 \keywords{Multi-Agent Systems, Retrieval-Augmented Generation, Query Rewriting,
 Retrieval Evaluation, Software Ecosystem Monitoring, Negative Results,
 Self-Improving Agents, RLAIF}
@@ -661,6 +691,7 @@ feedback.
 \end{tikzpicture}%
 }
 \caption{Adaptive multi-agent RAG architecture.}
+\Description{Block diagram of the adaptive multi-agent architecture. A user question enters an Orchestrator agent, which delegates to a Query Rewriter, a Retriever, and an Evaluator in sequence. The Retriever draws on software ecosystem documents comprising release notes, community discussions, and security advisories. The Evaluator scores retrieval quality and can return control to the Orchestrator to retry retrieval before an answer is generated.}
 \label{fig:architecture}
 \end{figure}
 
@@ -844,7 +875,8 @@ phrasing; \emph{server-side} endpoints pass the phrasing as a request
 parameter.}
 \label{tab:endpoints}
 \small
-\begin{tabular}{@{}llll@{}}
+\footnotesize
+\begin{tabular}{@{}p{0.26\linewidth}@{\hspace{6pt}}c@{\hspace{6pt}}p{0.30\linewidth}@{\hspace{6pt}}p{0.26\linewidth}@{}}
 \toprule
 Endpoint & Tier & Phrasing enters as & Queried when \\
 \midrule
@@ -1630,6 +1662,7 @@ of these particular traces, not an architecture effect:
 Section~\ref{sec:scaled-eval} reports the two systems as statistically
 indistinguishable once it is fixed.
 }
+\Description{Side-by-side execution traces for the question about Siri issues following an iOS update. The single-agent path performs rewriting, retrieval, evaluation, and generation in one pass and yields an answer with limited supporting evidence. The multi-agent path routes the question through Orchestrator, Query Rewriter, Retriever, and Evaluator agents and yields an answer citing release documentation and community reports. Both traces predate the retrieval defect repaired in this paper.}
 \label{fig:siri_example}
 \end{figure*}
 
@@ -1648,10 +1681,11 @@ architecture.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{Figures/execution_trace.png}
+\includegraphics[width=\columnwidth]{Figures/execution-trace.png}
 \caption{
 Example execution trace of the Query Rewriter, Retriever, and Evaluator agents.
 }
+\Description{Screenshot of a console execution trace showing each agent's output in turn: the Query Rewriter's reformulation of the user question, the Retriever's endpoint calls and the documents returned, and the Evaluator's numeric retrieval quality score, followed by the generated answer with its cited sources.}
 \label{fig:execution_trace}
 \end{figure}
 \subsection{Adaptive Feedback}
