@@ -1388,11 +1388,15 @@ which isolates architecture from model:
 \caption{Retrieval quality on the 100-question stratified benchmark subset
 ($n=100$), pooled graded relevance, judge \texttt{llama3.1}. The two
 multi-agent arms are configured identically and differ only in answer synthesis;
-each nonetheless performs its own retrieval against live sources, and their
-candidate pools coincide on 95 of the 100 questions (their ranked top-$k$
-coincide on all 100). Retrieval is not frozen for any run reported here: the
-endpoints are queried live, so figures from different runs are comparable in
-direction but not paired question-by-question.}
+each nonetheless performs its own retrieval against live sources. Their ranked
+top-$k$ sets coincide on all 100 questions. Of the 93 questions for which a
+candidate pool was recorded, their pools are identical as ordered lists on 88
+and as sets on 89. On the remaining 7 every live endpoint returned nothing and
+the local fallback corpus supplied the documents, so no pool exists to compare;
+those 7 are excluded here rather than counted as agreements. Retrieval is not
+frozen for any run reported here: the endpoints are queried live, so figures
+from different runs are comparable in direction but not paired
+question-by-question.}
 \label{tab:scaled-retrieval}
 \begin{tabular}{lrrrr}
 \toprule
