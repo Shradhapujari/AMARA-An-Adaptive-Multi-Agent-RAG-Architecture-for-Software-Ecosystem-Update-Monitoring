@@ -270,3 +270,42 @@ class TestStratifiedLimit:
         assert len(head_cats) == 2, f"expected head slice to lose categories, got {head_cats}"
         assert len(strat_cats) == 5, f"stratified should keep all 5, got {strat_cats}"
         assert len(strat) == 100
+
+
+class TestStratifiedLimitCompositeKey:
+    """Balancing one field is not enough when the blocks nest.
+
+    Each category block in benchmark_300.json is itself ordered by ecosystem,
+    so `--stratify category` takes the first 20 of each 60-block and sees only
+    ~10 of 24 ecosystems. A composite key balances the cross product.
+    """
+
+    def _nested(self):
+        rows = []
+        for cat in ("releases", "bugs"):
+            for eco in ("ubuntu", "chrome", "docker", "npm"):
+                rows += [{"id": f"{cat}-{eco}-{i}", "category": cat,
+                          "ecosystem": eco} for i in range(3)]
+        return rows
+
+    def test_single_key_collapses_the_nested_field(self):
+        out = B.stratified_limit(self._nested(), 4, "category")
+        assert len({r["category"] for r in out}) == 2
+        assert len({r["ecosystem"] for r in out}) < 4
+
+    def test_composite_key_covers_both(self):
+        out = B.stratified_limit(self._nested(), 8, "category,ecosystem")
+        assert len(out) == 8
+        assert len({r["category"] for r in out}) == 2
+        assert len({r["ecosystem"] for r in out}) == 4
+
+    def test_whitespace_and_single_field_still_work(self):
+        rows = self._nested()
+        a = B.stratified_limit(rows, 6, "category")
+        b = B.stratified_limit(rows, 6, " category ")
+        assert [r["id"] for r in a] == [r["id"] for r in b]
+
+    def test_composite_is_deterministic(self):
+        rows = self._nested()
+        assert ([r["id"] for r in B.stratified_limit(rows, 7, "category,ecosystem")]
+                == [r["id"] for r in B.stratified_limit(rows, 7, "category,ecosystem")])

@@ -461,19 +461,57 @@ def stratified_limit(records: Sequence[dict], limit: int,
     thread through), it keeps within-group ordering so a `--resume` of a
     smaller limit stays a prefix, and it degrades gracefully when groups are
     uneven: a group that runs out simply stops contributing.
+
+    Several comma-separated fields ("category,ecosystem") balance both
+    dimensions, because balancing category alone still collapses ecosystem
+    coverage -- each category block is itself ordered by ecosystem.
+
+    The nesting matters, and flattening it is a trap. Grouping on the *tuple*
+    ("releases", "Apple iOS") makes ~120 groups for benchmark_300, and a
+    round-robin over 120 groups with `limit=30` never reaches the later
+    categories: measured on the real file, tuple-grouping takes ecosystem
+    coverage from 3 to 24 but drops category coverage from 5 to 2. It moves the
+    collapse rather than removing it. So the walk is hierarchical instead: one
+    step per top-level group per cycle, and each top-level group advances its
+    own nested round-robin. Both dimensions stay balanced at any limit.
     """
     if not limit or limit <= 0 or limit >= len(records):
         return list(records)
-    groups: "OrderedDict[object, List[dict]]" = OrderedDict()
-    for r in records:
-        groups.setdefault(r.get(key), []).append(r)
+
+    fields = [f.strip() for f in str(key).split(",") if f.strip()] or ["category"]
+
+    def _nest(rows: Sequence[dict], depth: int):
+        """Nested round-robin queues: a list of rows, or a list of sub-queues."""
+        if depth >= len(fields):
+            return list(rows)
+        groups: "OrderedDict[object, List[dict]]" = OrderedDict()
+        for r in rows:
+            groups.setdefault(r.get(fields[depth]), []).append(r)
+        return [_nest(g, depth + 1) for g in groups.values()]
+
+    def _take(node) -> Optional[dict]:
+        """Pop one record, advancing this node's round-robin by one position."""
+        if not node:
+            return None
+        if isinstance(node[0], dict):          # leaf: a queue of records
+            return node.pop(0)
+        for i, child in enumerate(node):       # branch: try each sub-queue once
+            got = _take(child)
+            if got is not None:
+                # Rotate so the next visit starts after the child just served.
+                node.append(node.pop(i))
+                return got
+        return None
+
+    tree = _nest(records, 0)
     out: List[dict] = []
     while len(out) < limit:
         progressed = False
-        for g in groups.values():
-            if not g:
+        for top in list(tree):
+            got = _take(top)
+            if got is None:
                 continue
-            out.append(g.pop(0))
+            out.append(got)
             progressed = True
             if len(out) >= limit:
                 break
