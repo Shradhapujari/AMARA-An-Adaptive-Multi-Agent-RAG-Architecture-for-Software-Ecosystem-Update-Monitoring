@@ -1,35 +1,29 @@
 %% TOSEM special section: Human-AI Collaboration in Software Engineering.
 %% Journal-first / fast-impact track. Submission deadline 1 September 2026.
-%% Journal-first extension of: AgenticSE '26 (Workshop on Agentic Software
-%% Engineering, San Jose, CA, May 2026). Formatted per acmart-primary-3
-%% samples/acmsmall-submission.tex.
+%% Formatted per acmart-primary-3 samples/acmsmall-submission.tex.
 %%
 %% ---------------------------------------------------------------------------
-%% ANONYMITY -- CHECK THE TRACK'S RULE BEFORE SUBMITTING.
+%% ANONYMITY -- ON. The class options below include `anonymous`, so acmart
+%% suppresses the author block, affiliations and e-mail addresses on page 1 and
+%% in the running heads. To de-anonymise for the camera-ready, drop that one
+%% option; nothing else in this file needs changing.
 %%
-%% As it stands the paper is NOT anonymised: author names and affiliations
-%% appear on page 1 and in every running head. The acmart submission sample
-%% uses [acmsmall,screen,anonymous,review], so if this track is
-%% double-anonymous, swap the class line below for the commented one.
+%% What was checked when it was turned on, so a later editor need not redo it:
+%%   - acknowledgments thank data-source maintainers, not people or funders
+%%   - no repository URL appears anywhere in the paper
+%%   - the earlier version of this work is referred to but never cited, so the
+%%     bibliography carries no self-identifying entry
+%%   - no funding statement
+%% Verified on the built PDF three ways, because extracted text alone misses the
+%% usual failure: no name, e-mail or affiliation in the text; no /Author
+%% metadata key; and no match in a raw string scan of the PDF stream.
 %%
-%% Adding `anonymous` is NECESSARY BUT NOT SUFFICIENT here. The class hides the
-%% author block; it cannot hide the places where the text identifies the authors
-%% by referring to its own predecessor. If anonymising, also neutralise every
-%% occurrence of "the conference version" (grep finds them) and the naming of
-%% AgenticSE '26 in the comment above. The usual phrasing is "an earlier version
-%% of this work" with the venue withheld, or a citation to it as third-party
-%% work.
-%%
-%% Note that for a JOURNAL-FIRST submission the predecessor is normally declared
-%% on purpose -- eligibility depends on it -- so the named form is likely the
-%% correct one. Verify against the track's call rather than assuming either way.
+%% The body refers to "the conference version" where it reports what that
+%% version claimed and how this one corrects it. That phrasing names no venue
+%% and no author, and the comparison is the paper's argument rather than
+%% incidental, so it stays. Journal-first eligibility is declared on the
+%% submission form, not in the manuscript.
 %% ---------------------------------------------------------------------------
-%\documentclass[acmsmall,screen,anonymous,review]{acmart}
-%% `anonymous` suppresses the author block, affiliations and e-mail addresses
-%% for double-anonymous review. Nothing else in this file needs scrubbing: the
-%% acknowledgments thank data-source maintainers rather than people or funders,
-%% no repository URL appears, and the earlier conference version is referred to
-%% without being cited, so the bibliography carries no self-identifying entry.
 \documentclass[acmsmall,review,anonymous,screen]{acmart}
 
 %% acmart already loads booktabs, graphicx, pifont and hyperref; re-loading them
@@ -57,9 +51,6 @@
 \title[When Query Rewriting Loses the Documents]{When Query Rewriting Loses the
 Documents: An Adaptive Multi-Agent RAG Architecture for Software Ecosystem
 Update Monitoring}
-
-% Conference version title, retained for reference:
-% \title{An Adaptive Multi-Agent RAG Architecture for Software Ecosystem Update Monitoring}
 
 \author{Shradha Devendra Pujari}
 %% TODO before camera-ready: add the author's real ORCID.
