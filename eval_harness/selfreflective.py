@@ -40,6 +40,14 @@ declining over guessing, and our own Evaluator expresses that only as a scalar
 threshold. This baseline decides per passage instead, which is the mechanism the
 literature actually proposes.
 
+One bound holds throughout and is load-bearing for the threats discussion: **a
+document is discarded only on an explicit IRRELEVANT verdict.** Backend errors,
+empty completions, hedged replies and preambles that crowd out the verdict all
+keep the document. The critic shares a model with the judge that later labels
+relevance for scoring, so discarding is the direction that narrows the candidate
+set toward the judge's own preferences; failing closed would deepen that
+circularity in proportion to how often the critique is malformed, and invisibly.
+
 Determinism: every critique call runs at temperature 0. The critiques are
 LLM judgements, so they are not deterministic across model versions, but they
 are reproducible for a fixed model and prompt.
@@ -90,6 +98,25 @@ def _one_word(reply: str) -> str:
     return ""
 
 
+def find_verdict(reply: str, options) -> str:
+    """First of `options` appearing anywhere in `reply`, or '' if none does.
+
+    A first-token parse is defeated by anything the model puts in front of the
+    verdict -- "Sure! RELEVANT" parses to SURE -- and at max_tokens=8 a stray
+    preamble costs the whole verdict. Scanning for the keyword instead means the
+    reply only has to *contain* the judgement.
+
+    `options` must be ordered so that no option is a suffix of a later one:
+    RELEVANT is a substring of IRRELEVANT, so IRRELEVANT has to be tested first
+    or every rejection reads as an acceptance.
+    """
+    text = (reply or "").upper()
+    for opt in options:
+        if opt in text:
+            return opt
+    return ""
+
+
 def doc_context(docs: List[dict], limit: int = 200) -> str:
     return "\n".join(
         f"- [{d.get('source','?')}] {d.get('title','')}: "
@@ -122,23 +149,34 @@ class SelfReflectiveRAG:
             text=(doc.get("detail") or doc.get("text") or "")[:600],
         )
         try:
-            verdict = _one_word(self.client.generate(prompt, temperature=0.0,
-                                                     max_tokens=8))
+            reply = self.client.generate(prompt, temperature=0.0, max_tokens=16)
         except LLMError:
             # A failed critique must not silently discard a document; keeping it
             # biases toward the non-abstaining behaviour of the other arms,
             # which is the conservative direction for this arm's own claim.
             return True
-        return verdict.startswith("RELEVANT")
+        # IRRELEVANT must be tested before RELEVANT: the latter is a substring of
+        # the former, so the reverse order reads every rejection as an approval.
+        verdict = find_verdict(reply, ("IRRELEVANT", "RELEVANT"))
+        # Drop only on an explicit rejection. An empty completion, a hedge
+        # ("MAYBE"), a refusal, or a preamble that crowds the verdict out of the
+        # token budget all keep the document. This is the same direction as the
+        # LLMError path and for the same reason: dropping is what narrows the
+        # candidate set toward the critic's own preferences, and the critic here
+        # shares a model with the judge that later scores relevance. Failing
+        # closed would make that circularity worse, silently, in proportion to
+        # how often the critique is malformed.
+        return verdict != "IRRELEVANT"
 
     def support_verdict(self, query: str, docs: List[dict], answer: str) -> str:
         prompt = ISSUP_PROMPT.format(query=query, ctx=doc_context(docs),
                                      answer=answer)
         try:
-            return _one_word(self.client.generate(prompt, temperature=0.0,
-                                                  max_tokens=8)) or "PARTIAL"
+            reply = self.client.generate(prompt, temperature=0.0, max_tokens=16)
         except LLMError:
             return "PARTIAL"
+        # UNSUPPORTED before SUPPORTED, for the substring reason above.
+        return find_verdict(reply, ("UNSUPPORTED", "SUPPORTED", "PARTIAL")) or "PARTIAL"
 
     # ------------------------------------------------------------------ answer
 

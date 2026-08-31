@@ -188,3 +188,59 @@ def test_decline_text_reads_as_an_abstention_to_the_benchmark_scorer():
     """CRAG-style scoring must label a decline `missing`, not `incorrect`."""
     from eval_harness.benchmarks import is_abstention
     assert is_abstention(DECLINE_TEXT, strong_only=True) is True
+
+
+# --------------------------------------------------- fail-open bound (ISREL)
+#
+# The paper's threats discussion rests on one claim about this arm: a document is
+# discarded ONLY on an explicit IRRELEVANT verdict. Discarding is the direction
+# that narrows the candidate set toward the critic's preferences, and the critic
+# shares a model with the judge that later scores relevance -- so a malformed
+# critique that silently dropped a document would deepen that circularity in
+# proportion to how often the model misbehaves. These tests are what make the
+# claim checkable.
+
+@pytest.mark.parametrize("reply", [
+    "", "   ", "...", "***",           # nothing parseable
+    "MAYBE", "UNSURE", "UNCLEAR",      # hedges
+    "I cannot judge this document.",   # refusal
+    "Sure! RELEVANT",                  # verdict behind a preamble
+    "Answer: RELEVANT",
+    "RELEVANT",
+    "relevant",
+])
+def test_document_is_kept_unless_the_verdict_is_explicitly_irrelevant(reply):
+    e = SelfReflectiveRAG(StubClient([reply]))
+    assert e.is_relevant("Firefox version?", DOCS[0]) is True, reply
+
+
+@pytest.mark.parametrize("reply", [
+    "IRRELEVANT", "irrelevant", "This document is IRRELEVANT.",
+    "Answer: irrelevant", "**IRRELEVANT**",
+])
+def test_document_is_dropped_on_an_explicit_rejection(reply):
+    e = SelfReflectiveRAG(StubClient([reply]))
+    assert e.is_relevant("Firefox version?", DOCS[0]) is False, reply
+
+
+def test_irrelevant_is_matched_before_relevant():
+    """RELEVANT is a substring of IRRELEVANT; the wrong order turns every
+    rejection into an approval, which would disable the filter entirely."""
+    from eval_harness.selfreflective import find_verdict
+    assert find_verdict("IRRELEVANT", ("IRRELEVANT", "RELEVANT")) == "IRRELEVANT"
+
+
+def test_unsupported_is_matched_before_supported():
+    from eval_harness.selfreflective import find_verdict
+    assert find_verdict("UNSUPPORTED", ("UNSUPPORTED", "SUPPORTED", "PARTIAL")) \
+        == "UNSUPPORTED"
+
+
+def test_support_verdict_reads_a_verdict_behind_a_preamble():
+    e = SelfReflectiveRAG(StubClient(["Certainly. SUPPORTED"]))
+    assert e.support_verdict("q", DOCS, "answer") == "SUPPORTED"
+
+
+def test_find_verdict_returns_empty_when_no_option_appears():
+    from eval_harness.selfreflective import find_verdict
+    assert find_verdict("no verdict here", ("IRRELEVANT", "RELEVANT")) == ""
