@@ -9,7 +9,7 @@ Run:
     python multiagent_rag_v3.py demo     # all 3 demo queries
 """
 
-import json, re, time, sys, urllib.request
+import json, os, re, time, sys, urllib.request
 from pathlib import Path
 
 DATA_PATH = Path(__file__).parent / "data" / "enhanced_automated_sentiment_results.json"
@@ -1211,6 +1211,36 @@ def fetch_vendor_reddit(vendor: str, query: str = "", limit: int = 10) -> list:
         return []
 
 
+RANK_QUERY_CHOICES = ("original", "rewritten")
+
+
+def resolve_rank_query(original_query: str, rewritten_query: str,
+                       rank_on: str = None) -> str:
+    """Pick the phrasing the reranker scores against.
+
+    Which phrasing ranks is an ablation dimension in its own right, separate
+    from which scoring function ranks. Conflating them makes the previously
+    published configuration unmeasurable: that pipeline used the `none` scoring
+    function *on the rewrite*, so running `none` on the original question is
+    already a partial fix rather than a reproduction of it.
+    `MARAG_RANK_QUERY=rewritten` restores the published pairing.
+
+    Falls back to the rewrite when there is no original to rank on, which is
+    the single-agent baseline's case (it passes the same string as both).
+    Raises on an unrecognised value so a typo in an ablation sweep fails
+    loudly instead of silently measuring the default arm.
+    """
+    if rank_on is None:
+        rank_on = os.environ.get("MARAG_RANK_QUERY", "original")
+    rank_on = str(rank_on).strip().lower()
+    if rank_on not in RANK_QUERY_CHOICES:
+        raise ValueError(
+            f"MARAG_RANK_QUERY={rank_on!r} (expected {'|'.join(RANK_QUERY_CHOICES)})")
+    if rank_on == "rewritten" or not (original_query or "").strip():
+        return rewritten_query
+    return original_query
+
+
 def doc_key(doc: dict) -> str:
     """Identity of a retrieved document, for union-ing pools from two searches.
 
@@ -1449,7 +1479,13 @@ class RetrieverAgent:
         import rerank as _rerank
 
         pool = tier1 + tier2
-        _rank_query = original_query if original_query else rewritten_query
+        # Which phrasing the ranker scores against is its own ablation dimension,
+        # independent of which scoring function ranks. Conflating the two makes
+        # the published configuration unmeasurable: the previously published
+        # pipeline used the `none` scoring function *on the rewrite*, so running
+        # `none` on the original question is already a partial fix, not a
+        # reproduction of it. MARAG_RANK_QUERY=rewritten restores the real thing.
+        _rank_query = resolve_rank_query(original_query, rewritten_query)
         # Expose the pre-rerank candidate pool. A reranker can only reorder what
         # it is given, so "did the reranker fail?" and "was the document never
         # fetched?" are different diagnoses with different fixes -- and they are
