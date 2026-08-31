@@ -516,6 +516,7 @@ def _parse_args() -> EvalConfig:
     cfg.seed = a.seed
     cfg.judge_pool = a.judge_pool
     cfg.corpus = a.corpus
+    cfg.resume = a.resume
     return cfg
 
 
