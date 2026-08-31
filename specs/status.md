@@ -207,3 +207,17 @@ headline run with a DOI before submission.
 - Picking up the **experiment**: this file, then `evaluation-protocol.md` for
   what "admissible" and "MDE" mean precisely, then §3 above for exactly where
   things stand right now.
+
+## 6. Paper audit, 2026-08-31 ~02:15 (infra/eval session)
+
+Checked `paper/tosem_amara.tex` numeric claims against `scripts/check_runs.py`
+output. No fabricated or stale numbers found — Table `scaled-ablation` (n=100,
+frozen corpus) matches an admissible run within rounding, and the paper is
+already honest that `scaled-retrieval` is *not* frozen (says so in its own
+caption).
+
+**One gap:** neither scaled-ablation nor scaled-retrieval names its source
+`run_*` directory. `evaluation-protocol.md` §5 requires this, and it is what
+the artifact appendix (`reproducibility.md`) will need to point reviewers at
+the right `results/` folder. Suggest adding `run_id` to each caption before
+submission — cheap, and closes a real gap between the paper and its evidence.
