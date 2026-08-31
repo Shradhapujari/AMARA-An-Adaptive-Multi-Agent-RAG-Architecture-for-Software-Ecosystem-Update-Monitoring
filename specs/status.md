@@ -89,7 +89,7 @@ its result with `./venv311/bin/python scripts/topk_report.py` once
 Motivating question for that sweep: on the n=100 embed arm, `marag` holds far
 more judged-relevant documents in its pool than the baseline (pool recall 0.979
 vs 0.845) but does not convert that into better final retrieval (recall@5 0.391
-vs 0.401, nDCG@3 0.659 vs 0.649) — see `run_1788146393_67177cd53aab`. The naive
+vs 0.401, nDCG@3 0.659 vs 0.649) — see `run_1788160991_67177cd53aab`. The naive
 "the reranker is worse" reading fails a matched-ceiling control (queries where
 both arms hold the same number of relevant docs: diff -0.049, p=0.16, 95% CI
 crosses zero). `top_k=4` is the suspected throttle. If the gap opens at k=10/20,
@@ -102,15 +102,29 @@ even the ones after the strict-replay corpus fix (`9405592`,
 `1db8bb9`):
 
 ```
-run_1788160991_67177cd53aab   corpus_misses=6    (post strict-replay fix)
-run_1788146393_67177cd53aab   corpus_misses=589  (the killed record pass)
+run_1788160991_67177cd53aab   corpus_misses=6    (mode=replay, post strict-replay fix)
+run_1788146393_67177cd53aab   corpus_misses=589  (mode=replay, an EARLIER replay pass)
 ```
 
-6 misses is much better than 589, but the admissibility gate wants 0. **Phase 5
-has no admissible clean-corpus run yet.** Before trusting any n=100 number,
-re-run `check_runs.py` and confirm `corpus_misses=0` for the arm you're citing.
-Chasing those last 6 misses (`misses_by_host` in the run's `config.json` names
-which host) is probably the next concrete task once the current runs clear.
+**Correction to an earlier version of this note**: `run_1788146393` was not "the
+record pass" from any sweep — its own `config.json` says `mode: "replay"`,
+`recorded: 3760`. A replay-mode run backfills every miss it hits back into the
+snapshot directory, so this run wrote 3760 responses into
+`data/corpus_snapshot_b100_clean` while claiming to replay it. That is the
+warm-replay leak `phase_ablation.sh`'s own header comment warns about
+("Warm-replaying a snapshot inherited from an earlier, differently-scoped run
+leaves gaps that leak on every arm"). Caught by a peer session, verified here
+against the raw `config.json` before writing this correction in.
+
+Consequence: **`data/corpus_snapshot_b100_clean` is no longer a frozen
+artifact.** It has been written across at least two sessions over several
+hours (mtimes spanning 2026-08-30 20:19 through 2026-08-31 01:31, 4283
+entries), so record/replay purity cannot be asserted over it, regardless of
+what any single run's `corpus_misses` count reads. **Phase 5 is being re-run
+into a fresh directory, `data/corpus_snapshot_b100_p5`**, precisely to avoid
+this. Check `results/` for a run against that directory before trusting any
+n=100 number; anything still citing `corpus_snapshot_b100_clean` is suspect no
+matter its miss count.
 
 ## 4. Artifacts, and which ones do not travel
 
