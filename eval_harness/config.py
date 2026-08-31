@@ -25,6 +25,10 @@ class EvalConfig:
     # Dataset file (relative to project root) and how many questions to use.
     dataset: str = "validation_gt.json"
     limit: int = 0                      # 0 = all
+    # How --limit selects. "head" takes the first N in file order, which for a
+    # category-blocked file such as data/benchmark_300.json silently drops whole
+    # categories. "<field>" (e.g. "category") keeps the mix balanced instead.
+    stratify: str = ""
     # Established-benchmark mode. When set ("crag" or "generic"), the dataset is
     # loaded via benchmarks.load_benchmark and answers are additionally scored
     # with deterministic CRAG-style labelling (correct/incorrect/missing),
@@ -44,4 +48,7 @@ class EvalConfig:
     # runs incomparable and so must never be used for an ablation.
     corpus: str = os.environ.get("MARAG_CORPUS", "")
     # Where to write the run.
+    # Continue an interrupted run: the run dir to reuse (name or path). Its
+    # questions already scored for every system are skipped, not re-generated.
+    resume: str = ""
     results_dir: str = RESULTS_DIR
