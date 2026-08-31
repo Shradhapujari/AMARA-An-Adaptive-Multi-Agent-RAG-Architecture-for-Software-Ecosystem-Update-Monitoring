@@ -675,7 +675,7 @@ These scores are subsequently used by the Query Rewriter to influence
 future retrieval queries. This mechanism provides adaptation without
 human preference labels, manual annotation, or model retraining.
 
-\subsection{Software Ecosystem Data Sources}
+\subsection{Software Ecosystem Data Sources}\label{sec:datasources}
 
 The system retrieves information from software ecosystem documents
 obtained through multiple API endpoints.
@@ -985,11 +985,112 @@ The synthesis process follows six rules:
 \item Report when no matching vendor-specific information is available.
 \end{enumerate}
 
-\subsection{Experimental Setup}
+\subsection{A Multi-Ecosystem Benchmark}\label{sec:benchmark}
 
-The evaluation dataset consists of 50 software update questions
-spanning security, bug, release, community, and general software
-maintenance topics. The local fallback dataset contains 324 Reddit
+The evaluation in the conference version used 50 questions drawn from a single
+community source, which is too few to separate an architectural effect from
+noise and too narrow to say anything about ecosystems other than the ones those
+questions happened to mention. We therefore constructed a larger benchmark, and
+we describe its construction here in enough detail to expose its biases, because
+a benchmark assembled by the authors of the system it evaluates warrants that
+scrutiny.
+
+\subsubsection{Construction}
+
+The benchmark contains 300 questions arranged as a $24 \times 5$ grid of
+software ecosystem by question category, filled to 12 or 13 questions per
+ecosystem and exactly 60 per category. The 24 ecosystems span mobile and desktop
+platforms (Apple iOS, Apple macOS, Android, Windows), four Linux distributions
+(Ubuntu, Debian, Fedora, Arch) and the kernel itself, browsers (Firefox,
+Chrome), container infrastructure (Docker, Kubernetes), language package
+ecosystems (npm/Node, pip/Python, cargo/Rust), self-hosted and home applications
+(Home Assistant, NAS/self-hosted, WordPress), databases (PostgreSQL, MySQL,
+NoSQL), developer tooling, and LLM/AI model releases. The five categories are
+releases, bugs, security, community, and general.
+
+Every question is mined from live data rather than authored: 249 are verbatim
+titles of real community posts, and 51 are generated from real release or
+advisory records. No question is a template with a hand-written stem. The
+builder draws from a pool of 9,923 community posts and the release and advisory
+endpoints described in Section~\ref{sec:datasources}, and it is deterministic:
+a fixed seed, an on-disk response cache, and an \texttt{--offline} mode that
+replays the cache, so two runs of the builder produce byte-identical output.
+Each record carries the endpoint and record type it came from, so mined and
+generated questions remain distinguishable in any analysis.
+
+\subsubsection{Two Upstream Data Defects}
+
+Two properties of the upstream feeds would have injected false questions into
+the benchmark had they been consumed naively. We report them because they are
+properties of the public data sources rather than of our pipeline, and anyone
+building on the same feeds will encounter them.
+
+First, on advisory records the product field names the \emph{index token} under
+which the advisory was filed, not the affected product. An advisory for ``Mocha
+Telnet Lite for iOS 4.2'' is stored with product \texttt{iOS} and version
+\texttt{4.2.0}; advisories concerning Velero are stored under
+\texttt{Kubernetes}. Templating those fields directly yields questions such as
+\emph{``Is iOS v4.2.0 vulnerable?''}, which assert a falsehood in the question
+itself and would be scored against a system for failing to confirm it. The
+builder instead parses the affected product and version out of the advisory
+text, keeps a record only when the parsed product belongs to a tracked
+ecosystem, and discards the rest: of 3,113 advisory rows, 548 parsed and 268
+could be confidently attributed.
+
+Second, a minority of records carry malformed dates (for example
+\texttt{23.30.13102017} and \texttt{2025[29]0213}). Since date agreement is one
+of the two decisive facts in this domain, these records are dropped rather than
+normalized by guessing.
+
+We also stopped trusting the feed's own topical flags. Its CVE-relatedness flag
+fires on posts such as \emph{``Best budget AI subscription / API tokens?''}, so
+it is used only to break ties within the security category rather than to assign
+one.
+
+\subsubsection{Ground Truth and Its Limits}
+
+Of the 300 questions, 51 carry a reference answer, and only those generated from
+release or advisory records do --- a community post title states a question but
+does not come with an authoritative answer. Ground-truth coverage is therefore
+concentrated in the releases and security categories, and any correctness or
+hallucination measurement over this benchmark is computed on that subset rather
+than on all 300 questions.
+
+This has a consequence for sampling that we did not anticipate and that a
+reader reusing the benchmark should know. A subset selected to balance ecosystem
+and category, without regard to ground truth, can leave almost none: our first
+100-question stratified selection carried a reference answer on 2 questions. A
+selection that prefers ground-truth records within each grid cell retains 28.
+Reported retrieval metrics are unaffected --- they rest on pooled relevance
+judgments, not reference answers --- but any answer-correctness figure requires
+the second kind of selection, and we report retrieval and answer-faithfulness
+results rather than correctness for this reason.
+
+\subsubsection{Coverage Gaps}
+
+One of the 120 grid cells (Arch $\times$ security) had no live candidate
+available at build time. Rather than synthesize one, the builder logs the gap
+and fills the category quota from other ecosystems, so the category totals hold
+exactly while that single cell is empty. Nineteen product-name lookups returned
+404 because the product is not in the vendor catalogue (npm, pip, cargo,
+Synology, Home Assistant, NixOS, GitLab among them); this is a catalogue
+coverage limitation rather than an endpoint failure, and the affected ecosystems
+are represented through their community and release records instead.
+
+\subsection{Experimental Setup}\label{sec:setup}
+
+Three evaluation sets are used, and they answer different questions.
+The \emph{original} set is 50 software update questions spanning security, bug,
+release, community, and general maintenance topics; it is the set on which the
+superseded bespoke score was measured (Section~\ref{sec:two-metrics}). The
+\emph{ground-truth} set is 10 questions carrying reference answers, used for the
+diagnostic measurements in Sections~\ref{sec:two-metrics}
+and~\ref{sec:localizing} because relevance judgments and document-level counting
+are tractable at that size. The \emph{benchmark} set is the 300 questions of
+Section~\ref{sec:benchmark}, from which a 100-question subset balanced across
+category and ecosystem carries the scaled evaluation
+(Section~\ref{sec:scaled-eval}). Sample sizes are stated with every reported
+number, since they differ across these three. The local fallback dataset contains 324 Reddit
 posts collected through the software ecosystem data lake and filtered
 using minimum quality criteria of at least 10 comments, 3 author
 replies, and a quality score of at least 0.30.
@@ -1012,7 +1113,7 @@ This section presents the evaluation results of the proposed adaptive
 multi-agent RAG architecture. The evaluation examines retrieval quality,
 answer accuracy, adaptive feedback behavior, self-improvement
 performance, representative examples, failure modes, and implementation
-observations using a dataset of 50 software update questions.
+observations across the three evaluation sets of Section~\ref{sec:setup}.
 
 \subsection{Two Metrics, Two Orderings}\label{sec:two-metrics}
 
@@ -1153,7 +1254,7 @@ recovers the loss.
 The preceding measurements use ten ground-truth questions and are diagnostic
 rather than conclusive. To test whether the repaired pipeline holds up, we
 evaluated on a 100-question stratified subset of the 300-question benchmark
-(Section~\ref{sec:method}), balanced across all five question categories at 20
+(Section~\ref{sec:benchmark}), balanced across all five question categories at 20
 each and covering 21 of the 24 software ecosystems. All 100 questions completed
 across all three systems.
 
@@ -1877,9 +1978,12 @@ queries. Larger or domain-adapted models may improve synthesis quality,
 particularly for questions requiring extensive contextual reasoning.
 
 \textbf{Evaluation scope and generalization.}
-The evaluation consists of 50 software update questions spanning five
-categories. Although diverse, this remains a relatively small sample
-compared with real-world workloads. Additionally, all evaluation
+The largest evaluation reported here is 100 questions spanning five categories
+and 21 software ecosystems; the diagnostic measurements that localize the defect
+rest on 10 questions, and the superseded bespoke score on 50. Although diverse,
+all of these remain small samples compared with real-world workloads, and the
+10-question measurements in particular should be read as diagnostic rather than
+as effect-size estimates. Additionally, all evaluation
 questions are English-language. Generalization to larger datasets,
 additional languages, and different software ecosystems remains an
 open question.
