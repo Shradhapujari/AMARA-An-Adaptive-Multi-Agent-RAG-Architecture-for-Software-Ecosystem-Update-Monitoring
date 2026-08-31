@@ -99,20 +99,44 @@ def _one_word(reply: str) -> str:
 
 
 def find_verdict(reply: str, options) -> str:
-    """First of `options` appearing anywhere in `reply`, or '' if none does.
+    """The verdict a reply states, or '' if it states none.
 
-    A first-token parse is defeated by anything the model puts in front of the
-    verdict -- "Sure! RELEVANT" parses to SURE -- and at max_tokens=8 a stray
-    preamble costs the whole verdict. Scanning for the keyword instead means the
-    reply only has to *contain* the judgement.
+    Three properties, each earned by a reply shape observed or reasoned about:
 
-    `options` must be ordered so that no option is a suffix of a later one:
-    RELEVANT is a substring of IRRELEVANT, so IRRELEVANT has to be tested first
-    or every rejection reads as an acceptance.
+    * **Position-independent.** A first-token parse is defeated by anything the
+      model puts in front of the verdict -- "Sure! RELEVANT" parses to SURE --
+      and at a small token budget a preamble costs the whole verdict. The reply
+      only has to contain the judgement.
+
+    * **Whole-word.** Matching is on word boundaries, not substrings, so
+      RELEVANT cannot be found inside IRRELEVANT. Substring matching made the
+      option order load-bearing: test RELEVANT first and every rejection reads
+      as an approval, which disables the filter silently. The order below is
+      still longest-first as defence in depth, but correctness no longer rests
+      on it.
+
+    * **Negation-aware.** "not irrelevant" contains IRRELEVANT and means the
+      opposite. A negated verdict is skipped rather than honoured, so such a
+      reply falls through to the caller's default instead of being read
+      backwards. This is the direction that matters: for the relevance critique,
+      reading a negated rejection as a rejection would discard a document the
+      critic wanted to keep, and discarding is what narrows the candidate set
+      toward the critic's own preferences.
+
+    Returns the first option that appears as a non-negated word.
     """
-    text = (reply or "").upper()
+    words = [
+        "".join(c for c in tok if c.isalpha()).upper()
+        for tok in (reply or "").replace("*", " ").replace("/", " ").split()
+    ]
+    words = [w for w in words if w]
+    negators = {"NOT", "ISNT", "ISN", "NEITHER", "NEVER", "NO"}
     for opt in options:
-        if opt in text:
+        for i, w in enumerate(words):
+            if w != opt:
+                continue
+            if i and words[i - 1] in negators:
+                continue  # negated: this reply does not assert `opt`
             return opt
     return ""
 

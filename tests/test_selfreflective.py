@@ -244,3 +244,44 @@ def test_support_verdict_reads_a_verdict_behind_a_preamble():
 def test_find_verdict_returns_empty_when_no_option_appears():
     from eval_harness.selfreflective import find_verdict
     assert find_verdict("no verdict here", ("IRRELEVANT", "RELEVANT")) == ""
+
+
+# ------------------------------------------------- negation and word boundaries
+#
+# find_verdict originally did substring containment, which made two reply shapes
+# read backwards: "not irrelevant" contains IRRELEVANT and would have dropped a
+# document the critic wanted kept, and RELEVANT could be found inside
+# IRRELEVANT so the option order silently decided whether the filter worked at
+# all. Both are now structural rather than order-dependent.
+
+@pytest.mark.parametrize("reply", [
+    "not irrelevant",
+    "this is not IRRELEVANT",
+    "no, irrelevant",
+    "It isn't irrelevant.",
+])
+def test_a_negated_rejection_is_not_read_as_a_rejection(reply):
+    """The damaging direction: reading a negated rejection as a rejection
+    discards a document the critic meant to keep."""
+    from eval_harness.selfreflective import find_verdict
+    assert find_verdict(reply, ("IRRELEVANT", "RELEVANT")) != "IRRELEVANT"
+    assert SelfReflectiveRAG(StubClient([reply])).is_relevant("q", DOCS[0]) is True
+
+
+def test_a_reply_asserting_one_verdict_and_negating_the_other_resolves_by_meaning():
+    from eval_harness.selfreflective import find_verdict
+    assert find_verdict("clearly relevant, not irrelevant",
+                        ("IRRELEVANT", "RELEVANT")) == "RELEVANT"
+
+
+def test_matching_is_whole_word_so_option_order_cannot_break_it():
+    """Correctness must not rest on longest-first ordering."""
+    from eval_harness.selfreflective import find_verdict
+    assert find_verdict("IRRELEVANT", ("RELEVANT", "IRRELEVANT")) == "IRRELEVANT"
+    assert find_verdict("RELEVANT", ("RELEVANT", "IRRELEVANT")) == "RELEVANT"
+
+
+def test_punctuation_and_markup_do_not_hide_the_verdict():
+    from eval_harness.selfreflective import find_verdict
+    for reply in ("**IRRELEVANT**", "irrelevant.", "IRRELEVANT/", "- IRRELEVANT"):
+        assert find_verdict(reply, ("IRRELEVANT", "RELEVANT")) == "IRRELEVANT", reply
