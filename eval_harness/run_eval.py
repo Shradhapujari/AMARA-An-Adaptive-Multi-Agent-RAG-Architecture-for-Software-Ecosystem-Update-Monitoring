@@ -92,8 +92,35 @@ def _load_qrels_cache(results_dir: str) -> dict:
 
 
 def _save_qrels_cache(results_dir: str, cache: dict) -> None:
+    """Write the judgment cache atomically.
+
+    Two evaluations can share a results dir -- a `--resume` arm running beside
+    the next pass of a sweep is the normal case, not an exotic one. Writing this
+    file in place means the second writer can land inside the first one's output
+    and leave torn JSON. `_load_qrels_cache` swallows the parse error and
+    returns {}, so the damage is silent: every judgment is made again, costing
+    hours, and judgments made under a different model state can shift results
+    mid-sweep.
+
+    Write to a private temp file in the same directory, then rename. os.replace
+    is atomic within a filesystem, so a concurrent reader sees either the old
+    file or the new one, never a half-written one.
+    """
     os.makedirs(results_dir, exist_ok=True)
-    json.dump(cache, open(os.path.join(results_dir, QRELS_CACHE), "w"), indent=1)
+    final = os.path.join(results_dir, QRELS_CACHE)
+    tmp = f"{final}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(cache, f, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, final)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 PER_QUERY = "per_query.jsonl"
