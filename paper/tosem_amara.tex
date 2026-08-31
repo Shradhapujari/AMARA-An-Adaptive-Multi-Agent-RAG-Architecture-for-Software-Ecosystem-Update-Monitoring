@@ -25,7 +25,12 @@
 %% correct one. Verify against the track's call rather than assuming either way.
 %% ---------------------------------------------------------------------------
 %\documentclass[acmsmall,screen,anonymous,review]{acmart}
-\documentclass[acmsmall,review,screen]{acmart}
+%% `anonymous` suppresses the author block, affiliations and e-mail addresses
+%% for double-anonymous review. Nothing else in this file needs scrubbing: the
+%% acknowledgments thank data-source maintainers rather than people or funders,
+%% no repository URL appears, and the earlier conference version is referred to
+%% without being cited, so the bibliography carries no self-identifying entry.
+\documentclass[acmsmall,review,anonymous,screen]{acmart}
 
 %% acmart already loads booktabs, graphicx, pifont and hyperref; re-loading them
 %% risks an option clash and counts as modifying the template.
@@ -124,7 +129,8 @@ than beats the single-agent baseline on retrieval (nDCG@3 0.859 versus 0.863,
 $n=100$) at roughly twice the latency, so decomposition per se is not what
 produced the original result. We release the architecture, the evaluation
 harness, and a 300-question benchmark mined from live release, advisory, and
-community sources.
+community sources; these are available to reviewers on request and will be
+published on acceptance.
 \end{abstract}
 
 \begin{CCSXML}
