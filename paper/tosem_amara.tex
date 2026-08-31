@@ -67,7 +67,8 @@ retrieval-level feedback loop and a persistent term-weight memory --- and
 measured a 17.2\% retrieval improvement over a single-agent baseline on a
 keyword-overlap quality score of our own design. Re-scored with standard
 information-retrieval metrics over pooled relevance judgments, the same system
-\emph{lost} to the same baseline (nDCG@3 0.145 versus 0.765). The
+\emph{lost} to the same baseline (nDCG@3 0.145 versus 0.765; paired deficit
+0.620, exact Wilcoxon $p=0.016$, $n=10$). The
 disagreement was not a metric artifact. Because the rewritten query
 \emph{replaced} the user's wording at every retrieval endpoint, 22 of the 23
 relevant documents the baseline found were never fetched by the multi-agent
@@ -128,7 +129,9 @@ the conference version of this work.
 Re-scoring the same pipeline with standard information-retrieval metrics ---
 nDCG@$k$, Recall@$k$, and MRR over relevance judgments pooled across systems ---
 reversed the ordering. The single-agent baseline reached nDCG@3 of 0.765; the
-multi-agent architecture reached 0.145. A 17.2\% advantage on one metric
+multi-agent architecture reached 0.145, a paired per-query deficit of 0.620
+(bootstrap 95\% CI $[0.348, 0.865]$, exact Wilcoxon signed-rank $p=0.016$,
+$n=10$). A 17.2\% advantage on one metric
 coexisted with a factor-of-five deficit on another, over the same questions, the
 same corpus, and the same retrieved documents.
 
@@ -1139,7 +1142,12 @@ ground-truth validation questions.
 \begin{table}[t]
 \caption{The same two systems under the paper's own retrieval-quality score and
 under standard IR metrics. Bespoke score: $n=50$. IR metrics: $n=10$, pooled
-graded relevance, judge \texttt{llama3.1}.}
+graded relevance, judge \texttt{llama3.1}. The paired difference is
+multi-agent minus baseline over the same questions; $p$-values are exact
+two-sided Wilcoxon signed-rank, except the bespoke column, which is the paired
+$t$-test over 50 questions reported in the conference version. Confidence
+intervals are given in the text. The IR columns are reproduced by
+\texttt{scripts/inversion\_stats.py}.}
 \label{tab:inversion}
 \begin{tabular}{lrrrr}
 \toprule
@@ -1147,6 +1155,9 @@ System & bespoke score & nDCG@1 & nDCG@3 & MRR \\
 \midrule
 Single-agent baseline & 0.680 & \textbf{0.800} & \textbf{0.765} & \textbf{0.800} \\
 Multi-agent           & \textbf{0.798} & 0.133 & 0.145 & 0.250 \\
+\midrule
+Paired difference & $+0.118$ & $-0.667$ & $-0.620$ & $-0.550$ \\
+Exact $p$         & $0.020$ & $0.016$ & $0.016$ & $0.031$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1158,6 +1169,29 @@ the question and the retrieved set without reference to whether a retrieved
 document actually answers the question, it can be maximized by retrieving many
 topically adjacent documents. Standard IR metrics, scored against judged
 relevance, cannot be.
+
+Ten questions is few enough that the deficit deserves a test rather than an
+assertion, so we report exact ones. The multi-agent arm is worse on seven of the
+ten questions and tied on the remaining three, never better; the mean paired
+nDCG@3 difference is $-0.620$ with a percentile bootstrap 95\% CI of
+$[-0.865, -0.348]$, an exact two-sided Wilcoxon signed-rank $p$ of $0.016$, and
+a standardized effect size $d_z = -1.39$. A sign-flip permutation test on the
+mean difference gives the same $p$. The direction is consistent across every
+metric we computed: nDCG@1 $-0.667$, nDCG@5 $-0.632$, MRR $-0.550$, Recall@5
+$-0.550$, with $p \le 0.031$ throughout.
+
+Two caveats bound what those numbers establish, and we state them because the
+sample size makes both load-bearing. First, the Wilcoxon test discards tied
+pairs, leaving seven; with seven nonzero pairs the smallest two-sided $p$ the
+design can return is $2/2^{7} = 0.0156$. The observed $p$ \emph{is} that floor,
+so the correct reading is that every non-tied question favours the baseline ---
+the strongest signal obtainable at this $n$ --- and not that the evidence would
+survive a stricter threshold. Second, the confidence intervals are wide: they
+place the deficit somewhere between roughly a third and nine tenths of the
+metric's range. They establish the sign and the order of magnitude of the
+inversion, which is the claim this section makes, and they do not pin its
+magnitude. The magnitude claim we do make quantitatively is the document count
+in Section~\ref{sec:localizing}, which does not depend on an interval estimate.
 
 \subsection{Localizing the Loss: Ranking or Retrieval?}\label{sec:localizing}
 
@@ -1995,12 +2029,26 @@ particularly for questions requiring extensive contextual reasoning.
 The largest evaluation reported here is 100 questions spanning five categories
 and 21 software ecosystems; the diagnostic measurements that localize the defect
 rest on 10 questions, and the superseded bespoke score on 50. Although diverse,
-all of these remain small samples compared with real-world workloads, and the
-10-question measurements in particular should be read as diagnostic rather than
-as effect-size estimates. Additionally, all evaluation
+all of these remain small samples compared with real-world workloads. Additionally, all evaluation
 questions are English-language. Generalization to larger datasets,
 additional languages, and different software ecosystems remains an
 open question.
+
+The 10-question measurements carry the paper's inversion claim, so we are
+specific about what they support. The inversion itself survives exact paired
+testing (Section~\ref{sec:two-metrics}): the baseline wins every non-tied
+question, and the two-sided $p$ of $0.016$ is the smallest value attainable
+with seven nonzero pairs, which means the design is at its resolution limit
+rather than comfortably inside it. What ten questions cannot deliver is a
+magnitude: the bootstrap interval on the nDCG@3 deficit spans $[-0.865,
+-0.348]$, so the point estimate of $-0.620$ should not be read as an
+effect-size estimate, and the smaller within-panel contrasts of
+Table~\ref{tab:ranking-ablation} --- notably the 0.024 between ranking against
+the rewrite and against the original question --- are not resolvable at this
+$n$ at all. We report them as observations rather than findings. The claim that
+does not rest on an interval estimate is the document count: 22 of 23 relevant
+documents missing is a census of the retrieved sets, not a sample statistic,
+and its scaled counterpart (19 of 158) was computed on 100 questions.
 
 \textbf{Statistical impact.}
 The 17.2\% improvement on the bespoke score is statistically significant
