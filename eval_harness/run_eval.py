@@ -98,6 +98,10 @@ def _save_qrels_cache(results_dir: str, cache: dict) -> None:
 
 PER_QUERY = "per_query.jsonl"
 
+# Fewer ground-truth questions than this and the correctness column is an
+# anecdote, not a measurement. Matches report.MIN_REPORTABLE_N.
+MIN_GROUND_TRUTH = 5
+
 
 def stratify_summary(records: Sequence[dict], key: str) -> str:
     """
@@ -190,6 +194,21 @@ def run(cfg: EvalConfig) -> str:
         records = bench_mod.stratified_limit(records, cfg.limit, cfg.stratify)
         print(f"[harness] stratified {cfg.limit}/{before} by {cfg.stratify} -> "
               + stratify_summary(records, cfg.stratify))
+    # Ground truth is what `correctness` and the deterministic benchmark scoring
+    # are computed from. A selection can be perfectly balanced on category and
+    # ecosystem and still carry almost none of it: in benchmark_300.json the
+    # ground-truth-bearing records sit late in file order inside each cell, and
+    # `stratified_limit` takes each cell in file order, so --stratify picked 2
+    # of 100 where the parent file holds 51 of 300. The run then reports a
+    # correctness column measured on two questions.
+    n_gt = sum(1 for r in records if r.get("ground_truth"))
+    if n_gt < MIN_GROUND_TRUTH:
+        print(f"[harness] WARNING: only {n_gt}/{len(records)} selected questions "
+              f"carry ground truth — `correctness` and benchmark scoring will be "
+              f"computed on {n_gt} question(s) and are not reportable. "
+              f"data/benchmark_100.json is a 100-question selection that keeps "
+              f"28 of them (build_benchmark_subset.py prefers ground-truth "
+              f"records inside each cell).")
     ds_hash = dataset_hash(records)
     if cfg.resume:
         run_dir = (cfg.resume if os.path.isabs(cfg.resume)
