@@ -191,3 +191,59 @@ def test_resume_ignores_a_row_torn_by_a_kill_mid_write(harness):
 
     rows, done = R._read_finished(os.path.join(str(harness.tmp), run_id), ["a", "b"])
     assert len(rows) == 8 and done == {"1", "2", "3", "4"}
+
+
+# ── adding an arm to a finished run ──────────────────────────────────────
+
+def test_resuming_with_a_new_arm_keeps_the_arms_already_measured(harness):
+    """
+    Adding a third arm to a finished run must not delete the two already there.
+    An earlier version kept only rows whose system was in the new generator
+    list, so `--resume <dir> --generators <new arm>` wiped the completed work.
+    """
+    harness.install([StubGen("a"), StubGen("b")])
+    run_id = os.path.basename(R.run(harness.cfg()))
+
+    added = StubGen("c")
+    harness.install([added])
+    cfg = harness.cfg(resume=run_id)
+    cfg.generators = ["c"]
+    run_dir = R.run(cfg)
+
+    rows = _rows(run_dir)
+    assert {r["system"] for r in rows} == {"a", "b", "c"}
+    assert len(rows) == 12                       # 4 questions x 3 systems
+    # The new arm answered every question; the old arms were not re-run.
+    assert added.seen == [f"question {i}" for i in (1, 2, 3, 4)]
+
+
+def test_adding_an_arm_leaves_one_row_per_question_and_system(harness):
+    harness.install([StubGen("a"), StubGen("b")])
+    run_id = os.path.basename(R.run(harness.cfg()))
+    harness.install([StubGen("c")])
+    cfg = harness.cfg(resume=run_id)
+    cfg.generators = ["c"]
+    keys = [(r["query_id"], r["system"]) for r in _rows(R.run(cfg))]
+    assert len(keys) == len(set(keys))
+
+
+def test_an_incomplete_question_is_redone_without_losing_other_arms(harness):
+    """Partial rows for THIS run's systems are dropped; a bystander arm is not."""
+    rows = [
+        {"query_id": 1, "system": "a", "answer": "x", "ir": {}, "answer_scores": {}},
+        {"query_id": 1, "system": "b", "answer": "x", "ir": {}, "answer_scores": {}},
+        {"query_id": 1, "system": "z", "answer": "x", "ir": {}, "answer_scores": {}},
+        {"query_id": 2, "system": "a", "answer": "x", "ir": {}, "answer_scores": {}},
+        {"query_id": 2, "system": "z", "answer": "x", "ir": {}, "answer_scores": {}},
+    ]
+    d = harness.tmp / "run_x"
+    d.mkdir()
+    (d / "per_query.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+
+    kept, done = R._read_finished(str(d), ["a", "b"])
+
+    assert done == {"1"}
+    kept_keys = {(r["query_id"], r["system"]) for r in kept}
+    # Question 2 is incomplete for a/b, so its "a" row goes; "z" is untouched.
+    assert (2, "a") not in kept_keys
+    assert (2, "z") in kept_keys and (1, "z") in kept_keys

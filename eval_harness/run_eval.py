@@ -36,7 +36,7 @@ import random
 import re
 import sys
 import time
-from collections import Counter
+from collections import Counter, OrderedDict
 from typing import Dict, List, Sequence
 
 # corpus_snapshot and rerank live at the project root, next to the package.
@@ -131,15 +131,25 @@ def _read_finished(run_dir: str, systems: List[str]) -> tuple:
     """
     Read a previous run's streamed rows back.
 
-    Returns (rows, done_ids). Only questions with a row for EVERY system in
-    this run count as done: a question interrupted halfway through its systems
-    is re-run whole, and its partial rows are dropped, so resuming cannot
-    produce two rows for one (question, system).
+    Returns (rows, done_ids).
+
+    `done_ids` holds the questions already scored for EVERY system in THIS
+    run: a question interrupted partway through its systems is re-run whole,
+    so resuming cannot produce two rows for one (question, system).
+
+    `rows` keeps everything that is not about to be regenerated, including rows
+    for systems this run does not have. Resuming with a different arm list is
+    how an arm gets ADDED to a finished run --
+
+        --resume <run_dir> --generators marag:ollama:mistral
+
+    -- and an earlier version dropped every row whose system was not in the new
+    list, so adding a third arm silently deleted the two already measured.
     """
     path = os.path.join(run_dir, PER_QUERY)
     if not os.path.exists(path):
         return [], set()
-    by_q: Dict[str, Dict[str, dict]] = {}
+    by_q: "OrderedDict[str, Dict[str, dict]]" = OrderedDict()
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -153,9 +163,15 @@ def _read_finished(run_dir: str, systems: List[str]) -> tuple:
     want = set(systems)
     rows, done = [], set()
     for qid, per_system in by_q.items():
-        if want.issubset(per_system):
+        complete = want.issubset(per_system)
+        if complete:
             done.add(qid)
-            rows.extend(per_system[s] for s in systems)
+        for sysname, row in per_system.items():
+            # Rows for this run's systems survive only when the question is
+            # complete (an incomplete question is redone in full). Rows for any
+            # other system are never this run's to discard.
+            if sysname not in want or complete:
+                rows.append(row)
     return rows, done
 
 
