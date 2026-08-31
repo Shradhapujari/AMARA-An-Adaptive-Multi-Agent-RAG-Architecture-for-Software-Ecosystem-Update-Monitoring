@@ -77,11 +77,36 @@ def write_csv(agg: dict, path: str) -> None:
             w.writerow(row)
 
 
-def _fmt(cell) -> str:
+# Below this many observations a mean is not reportable as a number with a
+# confidence interval. n=1 yields "1.000±0.000", which reads as a perfect score
+# measured with certainty; it is one question. Seen in the wild: a 100-question
+# run whose `correctness` column was computed on 1-2 questions, because only
+# those carried ground truth.
+MIN_REPORTABLE_N = 5
+
+
+def _fmt(cell, n_expected: int = 0) -> str:
+    """
+    Render one metric cell, making a thin sample impossible to mistake for a
+    measurement. The count is shown whenever the metric was not computed on
+    every question, since that is exactly when a bare mean misleads.
+    """
     if not cell:
         return "—"
     mean, ci, n = cell
+    if n == 0:
+        return "—"
+    if n < MIN_REPORTABLE_N:
+        return f"{mean:.3f} (n={n}, too few)"
+    if n_expected and n < n_expected:
+        return f"{mean:.3f}±{ci:.3f} (n={n})"
     return f"{mean:.3f}±{ci:.3f}"
+
+
+def _expected_n(m: dict) -> int:
+    """Questions this system answered: latency is recorded once per question."""
+    cell = m.get("latency_s")
+    return cell[2] if cell else 0
 
 
 def write_markdown(agg: dict, cfg: dict, path: str) -> None:
@@ -103,8 +128,11 @@ def write_markdown(agg: dict, cfg: dict, path: str) -> None:
     L.append("## Head-to-head\n")
     L.append(header)
     L.append(sep)
+    thin = False
     for s, m in agg["systems"].items():
-        cells = [_fmt(m.get(k)) for k in metrics]
+        n_exp = _expected_n(m)
+        cells = [_fmt(m.get(k), n_exp) for k in metrics]
+        thin = thin or any("n=" in c for c in cells)
         sq = f"{m['self_quality'][0]:.3f}" if "self_quality" in m else "—"
         lat = f"{m['latency_s'][0]:.2f}" if "latency_s" in m else "—"
         L.append(f"| {s} | " + " | ".join(cells) + f" | {sq} | {lat} |")
@@ -119,10 +147,17 @@ def write_markdown(agg: dict, cfg: dict, path: str) -> None:
             L.append("| Category | " + " | ".join(systems) + " |")
             L.append("|" + "---|" * (len(systems) + 1))
             for cat, sd in sorted(agg["by_category"].items()):
-                cells = [_fmt(sd.get(s, {}).get(primary)) for s in systems]
+                cells = [_fmt(sd.get(s, {}).get(primary), _expected_n(sd.get(s, {})))
+                         for s in systems]
                 L.append(f"| {cat} | " + " | ".join(cells) + " |")
             L.append("")
 
+    if thin:
+        L.append(f"> Note: cells carrying `(n=...)` were computed on fewer than "
+                 f"the full question set — a metric is only scored where its "
+                 f"input exists (e.g. `correctness` needs ground truth). Below "
+                 f"n={MIN_REPORTABLE_N} the CI is omitted: it would read as "
+                 f"precision the sample cannot support.\n")
     L.append("> Note: `self_quality` is Multi-Agent RAG System's original built-in heuristic, "
              "shown only for reference — it is not a standard metric.\n")
     open(path, "w").write("\n".join(L))

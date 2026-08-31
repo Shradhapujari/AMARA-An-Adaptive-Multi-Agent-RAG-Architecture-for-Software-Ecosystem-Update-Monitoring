@@ -36,7 +36,7 @@ import random
 import re
 import sys
 import time
-from collections import Counter
+from collections import Counter, OrderedDict
 from typing import Dict, List, Sequence
 
 # corpus_snapshot and rerank live at the project root, next to the package.
@@ -92,11 +92,42 @@ def _load_qrels_cache(results_dir: str) -> dict:
 
 
 def _save_qrels_cache(results_dir: str, cache: dict) -> None:
+    """Write the judgment cache atomically.
+
+    Two evaluations can share a results dir -- a `--resume` arm running beside
+    the next pass of a sweep is the normal case, not an exotic one. Writing this
+    file in place means the second writer can land inside the first one's output
+    and leave torn JSON. `_load_qrels_cache` swallows the parse error and
+    returns {}, so the damage is silent: every judgment is made again, costing
+    hours, and judgments made under a different model state can shift results
+    mid-sweep.
+
+    Write to a private temp file in the same directory, then rename. os.replace
+    is atomic within a filesystem, so a concurrent reader sees either the old
+    file or the new one, never a half-written one.
+    """
     os.makedirs(results_dir, exist_ok=True)
-    json.dump(cache, open(os.path.join(results_dir, QRELS_CACHE), "w"), indent=1)
+    final = os.path.join(results_dir, QRELS_CACHE)
+    tmp = f"{final}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(cache, f, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, final)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 PER_QUERY = "per_query.jsonl"
+
+# Fewer ground-truth questions than this and the correctness column is an
+# anecdote, not a measurement. Matches report.MIN_REPORTABLE_N.
+MIN_GROUND_TRUTH = 5
 
 
 def stratify_summary(records: Sequence[dict], key: str) -> str:
@@ -127,15 +158,25 @@ def _read_finished(run_dir: str, systems: List[str]) -> tuple:
     """
     Read a previous run's streamed rows back.
 
-    Returns (rows, done_ids). Only questions with a row for EVERY system in
-    this run count as done: a question interrupted halfway through its systems
-    is re-run whole, and its partial rows are dropped, so resuming cannot
-    produce two rows for one (question, system).
+    Returns (rows, done_ids).
+
+    `done_ids` holds the questions already scored for EVERY system in THIS
+    run: a question interrupted partway through its systems is re-run whole,
+    so resuming cannot produce two rows for one (question, system).
+
+    `rows` keeps everything that is not about to be regenerated, including rows
+    for systems this run does not have. Resuming with a different arm list is
+    how an arm gets ADDED to a finished run --
+
+        --resume <run_dir> --generators marag:ollama:mistral
+
+    -- and an earlier version dropped every row whose system was not in the new
+    list, so adding a third arm silently deleted the two already measured.
     """
     path = os.path.join(run_dir, PER_QUERY)
     if not os.path.exists(path):
         return [], set()
-    by_q: Dict[str, Dict[str, dict]] = {}
+    by_q: "OrderedDict[str, Dict[str, dict]]" = OrderedDict()
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -149,9 +190,15 @@ def _read_finished(run_dir: str, systems: List[str]) -> tuple:
     want = set(systems)
     rows, done = [], set()
     for qid, per_system in by_q.items():
-        if want.issubset(per_system):
+        complete = want.issubset(per_system)
+        if complete:
             done.add(qid)
-            rows.extend(per_system[s] for s in systems)
+        for sysname, row in per_system.items():
+            # Rows for this run's systems survive only when the question is
+            # complete (an incomplete question is redone in full). Rows for any
+            # other system are never this run's to discard.
+            if sysname not in want or complete:
+                rows.append(row)
     return rows, done
 
 
@@ -190,6 +237,21 @@ def run(cfg: EvalConfig) -> str:
         records = bench_mod.stratified_limit(records, cfg.limit, cfg.stratify)
         print(f"[harness] stratified {cfg.limit}/{before} by {cfg.stratify} -> "
               + stratify_summary(records, cfg.stratify))
+    # Ground truth is what `correctness` and the deterministic benchmark scoring
+    # are computed from. A selection can be perfectly balanced on category and
+    # ecosystem and still carry almost none of it: in benchmark_300.json the
+    # ground-truth-bearing records sit late in file order inside each cell, and
+    # `stratified_limit` takes each cell in file order, so --stratify picked 2
+    # of 100 where the parent file holds 51 of 300. The run then reports a
+    # correctness column measured on two questions.
+    n_gt = sum(1 for r in records if r.get("ground_truth"))
+    if n_gt < MIN_GROUND_TRUTH:
+        print(f"[harness] WARNING: only {n_gt}/{len(records)} selected questions "
+              f"carry ground truth — `correctness` and benchmark scoring will be "
+              f"computed on {n_gt} question(s) and are not reportable. "
+              f"data/benchmark_100.json is a 100-question selection that keeps "
+              f"28 of them (build_benchmark_subset.py prefers ground-truth "
+              f"records inside each cell).")
     ds_hash = dataset_hash(records)
     if cfg.resume:
         run_dir = (cfg.resume if os.path.isabs(cfg.resume)

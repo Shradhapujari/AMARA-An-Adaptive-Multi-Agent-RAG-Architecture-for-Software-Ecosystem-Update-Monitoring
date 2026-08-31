@@ -34,13 +34,22 @@ def _norm_record(raw: dict, idx: int) -> Optional[dict]:
     # Treat empty / whitespace ground truth as missing.
     if isinstance(gt, str) and not gt.strip():
         gt = None
-    return {
+    rec = {
         "id": raw.get("id", idx),
         "query": query.strip(),
         "category": raw.get("category", raw.get("sub", "general")),
         "ground_truth": gt,
         "reddit_id": raw.get("reddit_id") or raw.get("url"),
     }
+    # Carry through the descriptive fields a caller may stratify or group on.
+    # Dropping them silently degrades `--stratify category,ecosystem` to
+    # category-only: every record's ecosystem becomes None, so the second
+    # dimension collapses into one group and contributes nothing. The harness
+    # then reports "ecosystem: None=100" — honest, but easy to miss.
+    for extra in ("ecosystem", "vendor", "source", "subreddit", "date"):
+        if raw.get(extra) is not None:
+            rec[extra] = raw[extra]
+    return rec
 
 
 def load_dataset(path: str, limit: int = 0) -> List[dict]:

@@ -14,8 +14,15 @@ SNAP="${2:?usage: phase_ablation.sh <dataset.json> <snapshot-dir>}"
 PY=./venv311/bin/python
 COMMON="--dataset $DATASET --generators marag,single_agent --judge ollama:llama3.1 --judge-pool"
 
-echo "##### WARM/RECORD pass | $(date +%H:%M:%S)"
-MARAG_RERANK=embed $PY -m eval_harness.run_eval $COMMON --corpus "replay:$SNAP"
+# Use record: on a FRESH directory. Warm-replaying a snapshot inherited from an
+# earlier, differently-scoped run leaves gaps that leak on every arm: that is how
+# the first 100-question sweep ended with 16 of 200 candidate pools differing
+# across arms. If $SNAP already exists, either delete it or pick a new name.
+if [ -d "$SNAP" ]; then
+  echo "NOTE: $SNAP exists -- reusing it. For a clean ablation use a new directory."
+fi
+echo "##### RECORD pass | $(date +%H:%M:%S)"
+MARAG_RERANK=embed $PY -m eval_harness.run_eval $COMMON --corpus "record:$SNAP"
 
 for arm in none bm25 embed; do
   echo "##### ARM $arm | $(date +%H:%M:%S)"

@@ -1,0 +1,2476 @@
+%% TOSEM special section: Human-AI Collaboration in Software Engineering.
+%% Journal-first / fast-impact track. Submission deadline 1 September 2026.
+%% Journal-first extension of: AgenticSE '26 (Workshop on Agentic Software
+%% Engineering, San Jose, CA, May 2026). Formatted per acmart-primary-3
+%% samples/acmsmall-submission.tex.
+\documentclass[acmsmall,review,screen]{acmart}
+
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usepackage{pifont}
+
+\emergencystretch=3em
+
+\setcopyright{acmlicensed}
+\acmJournal{TOSEM}
+\acmYear{2027}
+\acmVolume{0}
+\acmNumber{0}
+\acmArticle{0}
+\acmMonth{8}
+\acmDOI{}
+
+\received{1 September 2026}
+
+\title{When Query Rewriting Loses the Documents: An Adaptive Multi-Agent RAG
+Architecture for Software Ecosystem Update Monitoring}
+
+% Conference version title, retained for reference:
+% \title{An Adaptive Multi-Agent RAG Architecture for Software Ecosystem Update Monitoring}
+
+\author{Shradha Devendra Pujari}
+\affiliation{%
+  \institution{University of the Pacific}
+  \department{Department of Computer Science}
+  \city{Stockton}
+  \state{CA}
+  \country{USA}}
+\email{s_pujari@u.pacific.edu}
+
+\author{Solomon Berhe}
+\affiliation{%
+  \institution{University of the Pacific}
+  \department{Department of Computer Science}
+  \city{Stockton}
+  \state{CA}
+  \country{USA}}
+\email{sberhe@pacific.edu}
+
+\begin{document}
+
+\begin{abstract}
+Software ecosystems produce release notes, security advisories, version control
+records, and community discussions, and answering a question about a software
+update usually requires combining several of them. Retrieval-Augmented
+Generation (RAG) is a natural fit, and a common design pattern decomposes the
+pipeline into specialized agents, with a query-rewriting agent normalizing user
+terminology to the vocabulary of technical documents.
+
+This paper reports that this pattern contains a failure mode that is invisible
+to the metric most likely to be used to evaluate it. We built an adaptive
+multi-agent RAG architecture for software update questions --- specialized
+agents for query rewriting, retrieval, evaluation, and orchestration, with a
+retrieval-level feedback loop and a persistent term-weight memory --- and
+measured a 17.2\% retrieval improvement over a single-agent baseline on a
+keyword-overlap quality score of our own design. Re-scored with standard
+information-retrieval metrics over pooled relevance judgments, the same system
+\emph{lost} to the same baseline (nDCG@3 0.145 versus 0.765). The
+disagreement was not a metric artifact. Because the rewritten query
+\emph{replaced} the user's wording at every retrieval endpoint, 22 of the 23
+relevant documents the baseline found were never fetched by the multi-agent
+pipeline at all. Three successively stronger rerankers raised mean reciprocal
+rank from 0.250 to 0.625 while leaving nDCG@3 near 0.19, because reranking
+cannot promote a document that was never retrieved. Issuing both the original
+and the rewritten phrasing and unioning the candidate pools raises nDCG@3 to
+0.973 in one step, and on a 100-question benchmark spanning 24 software
+ecosystems it reduces the fetch-time loss from 96\% to 14.7\%.
+
+We draw four conclusions for practitioners building agentic software
+engineering tools. First, query rewriting must augment retrieval rather than
+substitute for it; the distinction is invisible in aggregate scores and decisive
+in the retrieved set. Second, a bespoke retrieval-quality metric can invert the
+ordering that standard IR metrics produce, so architectural claims resting on
+one are not safe. Third, an apparent 0.23 faithfulness deficit for the
+multi-agent system proved to be an artifact of answer \emph{format} --- a
+structured template judged against fluent prose --- and vanished when the same
+retrieval was synthesized through the baseline's own prompt (0.924 versus
+0.929). Fourth, and least comfortable: with both defects repaired and the
+synthesis model held constant, the multi-agent pipeline \emph{matches} rather
+than beats the single-agent baseline on retrieval (nDCG@3 0.865 versus 0.869,
+$n=96$) at roughly twice the latency, so decomposition per se is not what
+produced the original result. We release the architecture, the evaluation
+harness, and a 300-question benchmark mined from live release, advisory, and
+community sources.
+\end{abstract}
+
+\keywords{Multi-Agent Systems, Retrieval-Augmented Generation, Query Rewriting,
+Retrieval Evaluation, Software Ecosystem Monitoring, Negative Results,
+Self-Improving Agents, RLAIF}
+
+\maketitle
+
+\section{Introduction}
+
+Modern software ecosystems produce a diverse collection of documents, including release notes, security advisories, version control records, and online community discussions. These documents contain information about software updates, vulnerabilities, compatibility issues, and deployment considerations. Answering software update--related questions often requires integrating information from multiple sources.
+
+Software update information is frequently accessed through natural language questions. Developers, system administrators, and users commonly ask colleagues about software updates or seek information through online community platforms. Answering such questions often requires locating relevant documents, reviewing information from multiple sources, and evaluating the consistency of available documents. Systems that generate accurate source-grounded answers can reduce the effort required to retrieve, read, and synthesize information from software ecosystem documents.
+
+Retrieval-Augmented Generation (RAG) systems have emerged as a promising approach for answering such questions by combining document retrieval with large language models to generate answers grounded in external information~\cite{lewis2020rag}. Conventional single-agent RAG systems typically perform query understanding, retrieval, evaluation, and answer generation within a single reasoning process. This can result in vocabulary mismatch between user questions and retrieved documents~\cite{gao2024dmqr}, limited handling of domain-specific terminology, and the absence of feedback mechanisms for correcting retrieval errors \cite{cook2025rag}.
+
+Recent multi-agent RAG systems decompose retrieval and reasoning into multiple specialized agents~\cite{wang2024mainrag, nguyen2025marag}. Most existing evaluations focus on general question-answering benchmarks, whereas software update questions require combining information from heterogeneous software ecosystem documents. In addition, the role of feedback-based adaptation in multi-agent RAG systems for software update question answering has received limited empirical evaluation~\cite{ma2023rafe}.
+
+This paper presents an Adaptive Multi-Agent RAG Architecture for answering software update questions \cite{he2025,joshi2025review}. The architecture consists of specialized agents for query rewriting, retrieval, evaluation, and orchestration connected through a feedback loop \cite{ghosh2025event,adimulam2026,roman2026}.
+
+\subsection{A Result We Did Not Expect}
+
+Our first evaluation followed what is, judging by the literature, common
+practice: we defined a retrieval-quality score for the domain --- keyword and
+source overlap between the question and the retrieved set --- and compared the
+multi-agent architecture against a single-agent baseline on 50 real user
+questions. The architecture improved that score by 17.2\% ($t(49)=2.32$,
+$p=0.020$), improving in every question category. That is the result reported in
+the conference version of this work.
+
+Re-scoring the same pipeline with standard information-retrieval metrics ---
+nDCG@$k$, Recall@$k$, and MRR over relevance judgments pooled across systems ---
+reversed the ordering. The single-agent baseline reached nDCG@3 of 0.765; the
+multi-agent architecture reached 0.145. A 17.2\% advantage on one metric
+coexisted with a factor-of-five deficit on another, over the same questions, the
+same corpus, and the same retrieved documents.
+
+Metric disagreements of this size usually indicate that one metric is measuring
+something other than what it claims. That was true here, but not in the
+direction we assumed. Investigating the gap produced this paper's central
+finding, which we state plainly because it is the part that transfers to other
+systems:
+
+\begin{quote}
+\emph{The query-rewriting agent's output replaced the user's wording at every
+retrieval endpoint. Of the 23 relevant documents the single-agent baseline
+retrieved across the evaluation set, 22 were never fetched by the multi-agent
+pipeline at all.}
+\end{quote}
+
+The rewritten query was not retrieving the wrong documents from a correct
+candidate set --- a ranking problem, which is how we first read the evidence and
+how the vocabulary-mismatch framing in the literature invites one to read it.
+It was constructing a different, smaller candidate set from which the answer was
+largely absent. We confirmed the distinction by fixing ranking first: three
+successively stronger rerankers scored against the user's original question
+raised MRR monotonically from 0.250 to 0.500 to 0.625, while nDCG@3 stayed near
+0.19. A ranking fix that cannot close a ranking gap is evidence that the
+documents are not there to be ranked. Searching both the original and the
+rewritten phrasing and unioning the candidate pools moves nDCG@3 from 0.188 to
+0.973 in a single change.
+
+\subsection{Contributions}
+
+\begin{itemize}
+  \item \textbf{A failure mode in agentic query rewriting, measured and
+  localized.} Rewriting that substitutes for the user's query rather than
+  extending it loses relevant documents at the retrieval step. We quantify the
+  loss by counting documents rather than inferring it from scores, show that it
+  is not recoverable by reranking, and give a remedy that costs one additional
+  set of retrieval calls (Sections~\ref{sec:results} and~\ref{sec:discussion}).
+
+  \item \textbf{Evidence that a domain-specific retrieval metric can invert the
+  conclusion.} The same architecture, questions, and documents yield opposite
+  orderings under our keyword-overlap score and under pooled-judgment IR
+  metrics. We report both, with the pooling protocol and judge configuration, as
+  a caution for agentic-system evaluations that define their own quality scores.
+
+  \item \textbf{An honest accounting of what multi-agent decomposition bought.}
+  With both defects repaired, the multi-agent pipeline reaches parity with the
+  single-agent baseline at approximately twice the latency. We report this
+  rather than the improvement the original metric showed, and discuss what would
+  constitute evidence for decomposition in this domain.
+
+  \item \textbf{An architecture and adaptation mechanism for software ecosystem
+  monitoring.} Vendor-aware retrieval across release notes, security advisories,
+  and community discussions, a deterministic evaluator agent that triggers
+  retrieval retries, and a persistent term-weight memory that adapts retrieval
+  behavior without human feedback or model retraining (Section~\ref{sec:method}).
+
+  \item \textbf{A reusable benchmark and harness.} 300 questions spanning 24
+  software ecosystems and five question categories, mined from live release,
+  advisory, and community sources, with the upstream data defects we found
+  documented and handled; plus an evaluation harness computing IR metrics,
+  CRAG-style correctness labels, and paired statistics, released with the
+  ablation arms that produced every number in this paper.
+\end{itemize}
+
+\subsection{Paper Organization}
+
+Section~\ref{sec:related} reviews related work on RAG, multi-agent
+decomposition, corrective retrieval, and query rewriting.
+Section~\ref{sec:method} describes the architecture and the data sources.
+Section~\ref{sec:results} presents the evaluation: the metric disagreement, the
+localization of its cause, the ranking ablation, and the effect of the remedy.
+Section~\ref{sec:discussion} discusses what generalizes, the limitations we are
+able to bound, and the threats we cannot.
+Section~\ref{sec:conclusion} concludes.
+
+\section{Related Work}\label{sec:related}
+
+This section reviews prior work on Retrieval-Augmented Generation (RAG),
+multi-agent architectures, corrective retrieval, and self-improving
+agents. The proposed architecture builds on concepts from each of these
+areas.
+
+\subsection{Retrieval-Augmented Generation}
+
+Retrieval-Augmented Generation (RAG) combines document retrieval with
+large language models to generate answers grounded in external
+documents~\cite{lewis2020rag}. Several extensions have addressed
+limitations of fixed retrieval pipelines. DMQR-RAG uses query rewriting
+to reduce vocabulary mismatch~\cite{gao2024dmqr}. RaFe introduces
+feedback-based reranking of retrieved documents~\cite{ma2023rafe}.
+Self-RAG incorporates self-evaluation during generation~\cite{asai2024selfrag},
+while Adaptive-RAG selects retrieval logic based on query
+characteristics~\cite{jeong2024adaptiverag}. Surveys identify adaptive
+retrieval and agent-based coordination as active research directions in
+RAG systems~\cite{gao2023survey}.
+
+\subsection{Query Rewriting and Expansion}
+
+The standard justification for rewriting a query before retrieval is vocabulary
+mismatch: the terms a person uses for an information need frequently differ from
+those in the documents that would satisfy it, an effect documented long before
+retrieval became neural~\cite{furnas1987vocabulary}. Classical information
+retrieval addressed it by expanding the query with terms drawn from an initial
+retrieved set --- pseudo-relevance feedback in the Rocchio
+tradition~\cite{rocchio1971relevance} --- or from corpus-wide co-occurrence
+statistics~\cite{xu1996localglobal}, a design space surveyed by Carpineto and
+Romano~\cite{carpineto2012survey}.
+
+Large language models made the expansion text cheap to generate rather than
+mine. HyDE prompts a model for a hypothetical answer document and retrieves
+using that document's embedding in place of the query's~\cite{gao2023hyde}.
+Query2doc generates a pseudo-document and \emph{concatenates} it with the
+original query, retaining the user's terms in the issued
+query~\cite{wang2023query2doc}; Jagerman et al.\ compare prompting strategies
+for term expansion against pseudo-relevance
+feedback~\cite{jagerman2023expansion}. Within RAG,
+Rewrite-Retrieve-Read trains a small rewriter to adapt the query to a frozen
+retriever and reader~\cite{ma2023rewrite}, DMQR-RAG issues several rewrites of
+differing strategies and merges their results~\cite{gao2024dmqr}, and RaFe
+trains a rewriter from reranker feedback rather than from generation-side
+signals~\cite{ma2023rafe}.
+
+Framed this way, rewriting reads as a monotone improvement. The classical
+literature says otherwise. Mitra et al.\ named the failure ``query drift'':
+expansion terms drawn from a first-pass set containing non-relevant documents
+pull the expanded query toward those documents, so average gains coexist with
+substantial per-query losses~\cite{mitra1998expansion}. Amati et al.\ showed the
+losses concentrate on queries that are already difficult, and applied expansion
+selectively on the basis of predicted difficulty~\cite{amati2004drift}.
+Collins-Thompson treated expansion as a risk--reward problem, optimizing term
+weights under constraints that bound the downside rather than maximize the
+mean~\cite{collinsthompson2009risk}. The LLM-era analogue is Weller et al., who
+evaluate generative query and document expansion across methods, retrievers, and
+datasets and report ``a strong negative correlation between retriever
+performance and gains from expansion: expansion improves scores for weaker
+models, but generally harms stronger models,'' attributing the harm to noise
+that expansions add alongside their recall
+benefit~\cite{weller2024expansions}.
+
+This body of work is the closest prior art to the finding reported here, and the
+finding should be read against it. That expansion can degrade retrieval is
+established, and the standard explanation --- that it shifts the query's term
+distribution away from the relevant documents --- is consistent with what we
+observe. Three things differ. First, the drift results above are measured over a
+fixed collection with a fixed index, where every document is scored against
+whatever query is issued, so drift changes the \emph{ranking} of a candidate set
+that still contains the relevant documents. Retrieval in the present setting is a
+set of calls to external search endpoints that each return a small,
+provider-determined pool, so the phrasing determines which documents enter the
+pipeline at all; drift becomes a fetch-time loss rather than a ranking-time loss,
+and no downstream component can repair it. Second, the methods above augment
+rather than replace: query2doc concatenates, DMQR-RAG merges multiple rewrites,
+pseudo-relevance feedback re-weights an existing query vector. The failure
+reported here arises from substitution --- an agent whose output replaces the
+user's wording at every retrieval endpoint --- which is a property of how a
+rewriting agent is wired into a pipeline, not of any rewriting method. Third, we
+localize the loss by counting documents rather than by observing that a score
+fell: 22 of the 23 relevant documents present in the baseline's retrieved set
+were never fetched by the multi-agent pipeline, and three successively stronger
+rerankers do not recover them. Prior work establishes that expansion can drift.
+It does not establish where in an agentic pipeline the loss lands, nor that the
+loss survives arbitrarily good ranking.
+
+\subsection{Rewriting for Recall, Reranking for Precision}
+
+Retrieval systems have long been staged: an inexpensive first pass over the
+collection produces a candidate pool sized for recall, and an expensive second
+pass reorders that pool for precision. BM25 and the probabilistic relevance
+framework remain the reference first stage~\cite{robertson2009bm25}. The second
+stage is where pretrained transformers were adopted first and most decisively.
+monoBERT scores each query--document pair with a
+cross-encoder~\cite{nogueira2019monobert}; monoT5 recasts the same task as
+sequence-to-sequence relevance generation~\cite{nogueira2020monot5}; ColBERT
+trades some cross-encoder accuracy for late interaction over precomputed term
+embeddings~\cite{khattab2020colbert}; and RankGPT prompts a general-purpose
+language model to reorder a candidate list
+directly~\cite{sun2023rankgpt}. Lin et al.\ survey the pattern and its
+variants~\cite{lin2021pretrained}.
+
+The pattern carries an invariant that is easy to state and easy to lose: the
+first stage bounds recall, and the second stage can only permute what the first
+stage returned. Systems built on it therefore pair recall-oriented query handling
+--- expansion, multiple rewrites, hybrid sparse--dense retrieval --- with a
+precision-oriented reranker, and combine evidence from several query formulations
+\emph{before} ranking. Reciprocal rank fusion is the standard cheap
+combiner~\cite{cormack2009rrf}; DMQR-RAG's merge over multiple rewrites is the
+same move inside a RAG pipeline~\cite{gao2024dmqr}.
+
+The remedy reported in Section~\ref{sec:results} is an instance of this pattern,
+not a new technique: issue both the original and the rewritten phrasing, union
+the returned pools, then rank. Its interest is that the architecture it repairs
+had adopted the recall half of the pattern (a rewriting agent) and the precision
+half (an evaluator agent, and rerankers in the ablations) while omitting the
+union that makes the two compatible, and that the omission was invisible in the
+aggregate score the system was tuned against. The ranking ablation measures the
+invariant directly: MRR rises from 0.250 to 0.625 across three rerankers, because
+ranking within the fetched pool does improve, while nDCG@3 stays near 0.19,
+because the pool does not contain the documents the metric is asking for.
+
+\subsection{Multi-Agent RAG Frameworks}
+
+Multi-agent RAG systems distribute retrieval and reasoning across
+specialized agents. MA-RAG employs planner, extraction, and question
+answering agents~\cite{nguyen2025marag}. MAIN-RAG separates document
+selection and answer generation through dedicated predictor and judge
+agents~\cite{wang2024mainrag}. More generally, frameworks such as
+AutoGen~\cite{wu2023autogen} and smolagents~\cite{huggingface2024agents}
+provide infrastructure for agent orchestration and tool use. Most prior
+evaluations focus on general question-answering benchmarks, whereas this
+work evaluates a multi-agent architecture for software update question
+answering.
+
+\subsection{Multi-Agent RAG and Reproducibility Infrastructure}
+
+The self-correcting designs reviewed above --- Self-RAG's reflection
+tokens~\cite{asai2024selfrag}, CRAG's lightweight retrieval
+evaluator~\cite{yan2024crag}, Adaptive-RAG's complexity-based
+routing~\cite{jeong2024adaptiverag}, and FLARE's confidence-triggered retrieval
+during generation~\cite{jiang2023flare} --- decide \emph{whether} and \emph{how
+often} to retrieve, and how to filter what returns. None of them, as published,
+checks whether the text handed to the retriever preserves the user's own
+phrasing.
+
+Two toolkits now make much of this work runnable. FlashRAG is an MIT-licensed
+Python toolkit that reimplements RAG algorithms under one interface --- 16
+methods over 38 datasets as published~\cite{jin2025flashrag}, 23 algorithms over
+36 in the current release, including Self-RAG, Adaptive-RAG, and FLARE
+pipelines~\cite{flashrag2025repo}. RAGLAB reproduces six algorithms across ten
+benchmark datasets~\cite{zhang2024raglab} and publishes fine-tuned
+\texttt{selfrag\_llama3-8B} checkpoints with VLLM-based and quantized generation
+configurations~\cite{raglab2024repo}.
+
+We did not run a head-to-head comparison against these baselines, for a reason
+that is a property of our setting rather than a criticism of the toolkits: each
+assumes a static corpus embedded and indexed in advance. Self-RAG's released
+retrieval component is Contriever~\cite{izacard2022contriever} over the DPR
+Wikipedia passage split~\cite{karpukhin2020dpr} with precomputed embeddings; its
+authors note that retrieval over full English Wikipedia requires large memory
+and multiple GPUs, and report testing their on-demand retrieval script on a
+configuration with 100\,GB of RAM, while observing that less should
+suffice~\cite{selfrag2023repo}. RAGLAB's ColBERT retrieval server is documented
+as requiring at least 60\,GB of RAM~\cite{raglab2024repo}. CRAG's retrieval
+evaluator is a fine-tuned T5-large model, and its confidence thresholds are set
+separately for each evaluation dataset --- $(0.59, -0.99)$ for PopQA and
+$(0.95, -0.91)$ for biography generation, among others~\cite{yan2024crag} --- so
+transferring the method to a new domain requires re-tuning against labelled data
+for that domain. The system studied here retrieves from live release, advisory,
+and community APIs whose contents change between runs and for which no pre-built
+index exists: there is no static split to embed, and per-dataset thresholds have
+no analogue. The comparison we can make is against a single-agent baseline
+issuing the same calls to the same endpoints in the same time window, which
+isolates the architectural variable at the cost of not situating either system
+against published leaderboard numbers. We record this as a limitation rather than
+resolving it.
+
+\subsection{Corrective Retrieval and Adaptive Feedback}
+
+Corrective retrieval methods modify retrieval behavior when retrieved
+information is insufficient. CRAG evaluates retrieval quality and
+initiates additional retrieval when needed~\cite{yan2024crag}. FLARE
+performs retrieval conditioned on uncertainty during answer
+generation~\cite{jiang2023flare}. Reflexion uses iterative self-feedback
+to guide future behavior~\cite{shinn2023reflexion}. The architecture
+presented in this paper adopts a similar feedback-oriented perspective
+through a dedicated evaluator agent that can trigger retrieval retries
+when retrieval quality falls below a predefined threshold.
+
+\subsection{Self-Improving Agents}
+
+RLAIF replaces human preference annotations with AI-generated feedback
+signals for system improvement~\cite{bai2022constitutional}. Related
+work has explored feedback-driven adaptation in retrieval and generation
+systems. Unlike approaches that update model weights, the architecture
+proposed in this paper maintains a persistent memory of retrieval
+outcomes and uses those outcomes to adjust future query rewriting
+without human feedback or model retraining.
+
+\subsection{Evaluation Methodology for Retrieval-Augmented Systems}
+
+Retrieval evaluation inherits from TREC the use of pooled relevance judgments:
+candidates are collected from the runs of all participating systems and judged
+once, so no system is scored against a judgment set built around its own output.
+Pooling is nonetheless incomplete. Zobel found that TREC measured relative system
+performance reliably but overestimated recall, because many relevant documents
+had likely never been found~\cite{zobel1998reliable}, and Buckley and Voorhees
+showed that standard measures are not robust to substantially incomplete
+judgments~\cite{buckley2004incomplete}. Both concerns apply to a comparison
+between pipelines that fetch different document sets from live endpoints, and
+they are why the judgments used here are pooled across both systems and all
+ablation arms.
+
+Benchmarks supply the other half of the practice. BEIR measures zero-shot
+transfer across heterogeneous retrieval tasks~\cite{thakur2021beir}; KILT fixes a
+single Wikipedia snapshot and requires provenance~\cite{petroni2021kilt}; the
+CRAG benchmark spans five domains and eight question categories, with mock APIs
+simulating web and knowledge-graph search~\cite{yang2024}; and FreshQA targets
+questions whose answers change over time, the closest published analogue to
+software update questions~\cite{vu2024freshllms}. Reference-free scorers such as
+RAGAS~\cite{es2024ragas} and ARES~\cite{saadfalcon2024ares} estimate
+faithfulness and relevance without gold answers.
+
+Two aspects of that practice bear on the metric inversion reported here. The
+first is judge independence. LLM judges agree with human preferences at rates
+comparable to human--human agreement, but the same study documents position,
+verbosity, and self-enhancement biases~\cite{zheng2023judge}, and evaluators
+recognize and favor text they themselves generated~\cite{panickssery2024self}. A
+judge that is also the pipeline's generator, or that is prompted with the
+pipeline's own notion of relevance, is not independently measuring it. The second
+is abstention. The CRAG benchmark scores an accurate answer $1$, a missing answer
+$0$, and an incorrect answer $-1$, explicitly preferring an admission of
+ignorance to a confident
+error~\cite{yang2024}; unanswerable-question benchmarks draw the same
+distinction on the reading-comprehension side~\cite{rajpurkar2018squad2}. A
+keyword-overlap score registers neither distinction: it rewards the presence of
+question terms in the retrieved text whether or not that text answers the
+question, and assigns no cost to a fluent answer assembled from documents that do
+not support one.
+
+The general caution is not new. Armstrong et al.\ analysed a decade of reported
+ad-hoc retrieval improvements and found little evidence of cumulative progress,
+because baselines were generally weak --- often below the median original TREC
+system --- and questioned the value of a statistically significant gain over such
+a baseline~\cite{armstrong2009improvements}; Lipton and Steinhardt catalogue the
+reporting patterns that let such results stand~\cite{lipton2019trends}. A
+retrieval-quality score defined by the authors of the system it evaluates is the
+limiting case, having neither external calibration nor a cross-system pool. What
+this paper adds is a worked instance in which such a score and a standard one
+disagree by roughly a factor of five in opposite directions over the same runs,
+with the document-level audit that establishes which was right.
+
+\subsection{Negative and Mixed Results}
+
+Reporting that an architecture does not deliver what an earlier measurement
+credited it with has precedent in software engineering and adjacent fields.
+Menzies et al.\ published negative results for software effort estimation in
+\emph{Empirical Software Engineering} under that heading, rather than reframing
+the outcome~\cite{menzies2017negative}. Hellendoorn and Devanbu found that a
+carefully engineered n-gram model outperformed the deep models then displacing
+it for source code modeling, and identified properties of code that the neural
+models handled poorly~\cite{hellendoorn2017dnn}. Ferrari Dacrema et al.\
+examined 18 neural recommendation algorithms from top-level conferences, could
+reproduce 7 with reasonable effort, and found that 6 of those 7 were often
+outperformed by comparably simple heuristic
+baselines~\cite{dacrema2019progress}. Liu et al.\ reviewed 147 deep learning
+studies across 20 software engineering and 20 artificial intelligence venues and
+found reproducibility and replicability routinely treated as minor threats or
+deferred~\cite{liu2021reproducibility}. What these share with the present paper
+is not the sign of the result but its structure: a measurement that had been
+accepted is re-run under a protocol chosen independently of the system, the
+ordering changes, and the mechanism behind the change is identified precisely
+enough to transfer to other systems.
+
+\section{Method}\label{sec:method}
+
+This section describes the proposed adaptive multi-agent RAG
+architecture for software update question answering. The architecture
+decomposes query rewriting, retrieval, evaluation, and orchestration
+into specialized agents connected through an adaptive feedback loop. We
+also describe the software ecosystem data sources, answer synthesis
+process, and experimental setup used in the evaluation.
+
+\subsection{Architecture Overview}
+
+The proposed architecture separates software update question answering
+into four specialized agents coordinated by a central Orchestrator.
+Rather than performing query understanding, retrieval, evaluation, and
+answer generation within a single reasoning process, each task is
+assigned to a dedicated component with a defined responsibility. The
+architecture consists of a Query Rewriter, Retriever, Evaluator, and
+Orchestrator connected through a retrieval-level feedback loop, as
+shown in Figure~\ref{fig:architecture}.
+
+The design follows five principles. First, each agent performs a
+single task. Second, retrieval is restricted to vendor-specific
+information when a vendor can be identified. Third, retrieval quality
+is evaluated through an explicit feedback mechanism that can trigger
+additional retrieval attempts. Fourth, failures are isolated through
+defined input and output contracts. Finally, retrieval outcomes are
+persisted across sessions to support adaptation without human
+feedback.
+
+\begin{figure}[h]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={
+      rectangle,
+      draw,
+      rounded corners,
+      text centered,
+      align=center,
+      minimum height=0.8cm,
+      minimum width=3.1cm,
+      font=\small,
+      fill=white
+  },
+  agent/.style={
+      box,
+      fill=blue!10
+  },
+  arrow/.style={
+      ->,
+      thick,
+      >=stealth
+  }
+]
+
+% ==================================================
+% User Query
+% ==================================================
+
+\node[box] (user) at (0,5.2)
+      {User Question};
+
+% ==================================================
+% Orchestrator
+% ==================================================
+
+\node[agent,
+      minimum width=4.0cm]
+      (orch) at (0,4.0)
+      {Orchestrator Agent};
+
+% ==================================================
+% Specialized Agents
+% ==================================================
+
+\node[agent]
+      (rw) at (-4.0,2.3)
+      {Query Rewriter Agent};
+
+\node[agent]
+      (ret) at (0,2.3)
+      {Retriever Agent};
+
+\node[agent]
+      (eval) at (4.0,2.3)
+      {Evaluator Agent};
+
+% ==================================================
+% Documents
+% ==================================================
+
+\node[box,
+      minimum width=4.8cm]
+      (docs) at (0,0.7)
+      {Software Ecosystem Documents\\
+       Release Notes / Reddit / CVE};
+
+% ==================================================
+% Answer
+% ==================================================
+
+\node[box,
+      minimum width=3.8cm]
+      (ans) at (0,-0.9)
+      {Generated Answer};
+
+% ==================================================
+% Main Flow
+% ==================================================
+
+\draw[arrow]
+      (user.south)
+      -- (orch.north);
+
+\draw[arrow]
+      (orch.south)
+      -- ++(0,-0.35)
+      -| (rw.north);
+
+\draw[arrow]
+      (orch.south)
+      -- (ret.north);
+
+\draw[arrow]
+      (orch.south)
+      -- ++(0,-0.35)
+      -| (eval.north);
+
+\draw[arrow]
+      (ret.south)
+      -- (docs.north);
+
+\draw[arrow]
+      (docs.south)
+      -- (ans.north);
+
+\end{tikzpicture}%
+}
+\caption{Adaptive multi-agent RAG architecture.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Agent Definitions}
+
+The architecture comprises four agents organized under Orchestrator
+coordination.
+
+\textbf{Orchestrator Agent.}
+The Orchestrator coordinates execution of the retrieval pipeline. It
+receives the user question, delegates tasks to the remaining agents, and
+manages retrieval retries when requested by the Evaluator. The
+Orchestrator does not perform retrieval or answer generation directly.
+
+\textbf{Query Rewriter Agent.}
+The Query Rewriter addresses differences between user vocabulary and
+document vocabulary. Llama~3.1~8B is used to transform the original
+question into a retrieval-oriented representation. In the self-improving
+configuration, learned terms from previous retrieval outcomes are
+incorporated before query generation.
+
+\textbf{Retriever Agent.}
+The Retriever performs vendor-aware document retrieval. It first
+attempts to identify the software vendor referenced in the query using
+exact matching, alias lookup, and fuzzy matching against a registry of
+14,223 software vendors and 628 software-related subreddits. If a
+vendor is detected, retrieval is restricted to vendor-specific
+release notes, advisories, and community discussions. Otherwise, a
+general retrieval logic is used. The Retriever returns ranked
+documents without evaluating their quality \cite{guan2025, zheng2026, yang2026}.
+
+\textbf{Evaluator Agent.}
+The Evaluator estimates retrieval quality using a deterministic score
+between 0.0 and 1.0. The score combines evidence from retrieval
+volume, release-note matches, community matches, and CVE matches. If
+the score falls below a predefined threshold ($\theta = 0.30$), the
+Evaluator signals the Orchestrator to perform an additional retrieval
+attempt. The Evaluator does not generate answers \cite{zhuge2024}.
+
+\subsection{Adaptive Feedback and Self-Improvement}
+
+The architecture incorporates a retrieval-level feedback loop. After
+retrieval, the Evaluator assigns a quality score to the retrieved
+documents. If retrieval quality is insufficient, the Orchestrator
+re-executes the retrieval pipeline using a revised question generated by
+the Query Rewriter.
+
+The system also maintains a persistent Self-Improvement Memory. Query
+expansion terms accumulate positive or negative scores based on
+retrieval outcomes across sessions. Successful retrievals increase
+associated term weights, while unsuccessful retrievals decrease them.
+These scores are subsequently used by the Query Rewriter to influence
+future retrieval queries. This mechanism provides adaptation without
+human preference labels, manual annotation, or model retraining.
+
+\subsection{Software Ecosystem Data Sources}
+
+The system retrieves information from software ecosystem documents
+obtained through multiple API endpoints.
+
+\textbf{Verified Sources}
+\begin{itemize}
+\item \texttt{/\{vendor\}}: vendor registry (6,578 entries)
+\item \texttt{/v/}: software release notes (31,958 entries)
+\item \texttt{/cve}: vulnerability advisories (24,139 entries)
+\end{itemize}
+
+\textbf{Community Sources}
+\begin{itemize}
+\item \texttt{/reddit}: community discussions (208,466 posts)
+\item \texttt{/positive}: software update risk discussions (2,637 posts)
+\item \texttt{/by-subreddit?q=\{vendor\}}: vendor-specific discussions
+\item \texttt{/questions}: software-related user questions
+\end{itemize}
+
+To support vendor-aware retrieval, a registry of software vendors and
+associated subreddits is loaded at startup and cached locally.
+
+\subsection{Two Roles for a Rewritten Query}\label{sec:rewrite-roles}
+
+A rewritten query serves two distinct purposes in a retrieval pipeline,
+and the properties it needs for each are in tension. Issued to a
+retrieval endpoint, its job is to \emph{widen} the candidate set:
+vendor synonyms, product aliases, and the technical vocabulary of
+release notes and advisories all admit documents the user's own
+phrasing would not reach. Used to order that set, its job would be to
+express what the user asked --- which by construction it no longer
+does, having replaced the user's words with a paraphrase written for
+the document collection.
+
+The Query Rewriter is prompted for a retrieval-oriented restatement of
+at most 20 words directed at bug fixes, releases, changelogs, security
+patches, and performance. It therefore introduces terms frequent in the
+collection and absent from the question, and drops terms rare in the
+collection and decisive in the question. Both effects raise recall and
+lower the precision of any ordering computed from the rewrite, so we
+adopt a single design rule and apply it throughout the Retriever:
+
+\begin{quote}
+\emph{The rewritten query determines what is fetched. The original
+question determines how it is ordered.}
+\end{quote}
+
+Let $q$ denote the user's original question and $\tilde{q}$ the
+rewritten query returned by the Query Rewriter. The Retriever receives
+both: candidate acquisition (Section~\ref{sec:union-fetch}) is
+parameterized by $\tilde{q}$ and $q$ jointly, ranking
+(Section~\ref{sec:rerank}) by $q$ alone. Two auxiliary decisions follow
+the same rule. Vendor identification runs on $q$, because rewrites
+reliably inject the tokens \texttt{release}, \texttt{update}, and
+\texttt{fixes}, which the vendor registry matches as product names. The
+gate on the model-release endpoint is evaluated on $q$ and $\tilde{q}$
+concatenated, because a rewrite can drop the model name that made the
+question a model question. Date extraction is the one place where the
+implementation reads $\tilde{q}$ rather than $q$.
+
+\subsection{Candidate Acquisition by Union Fetch}\label{sec:union-fetch}
+
+Let $\mathcal{E}$ be the set of retrieval endpoints and $R_e(x)$ the
+document list endpoint $e$ returns for a phrasing $x$. The Retriever
+searches the phrasing set
+\begin{equation}
+Q =
+\begin{cases}
+\{\tilde{q}\} & \text{if } \mathrm{fold}(q) = \mathrm{fold}(\tilde{q}),\\
+\{\tilde{q},\, q\} & \text{otherwise,}
+\end{cases}
+\label{eq:phrasings}
+\end{equation}
+where $\mathrm{fold}(\cdot)$ denotes whitespace-trimmed
+lower-casing. The raw candidate multiset is the union
+\begin{equation}
+C = \bigcup_{e \in \mathcal{E}(q,\tilde{q})} \; \bigcup_{x \in Q} R_e(x),
+\label{eq:union}
+\end{equation}
+in which $\mathcal{E}(q,\tilde{q}) \subseteq \mathcal{E}$ is the
+endpoint subset admitted by the conditions in
+Table~\ref{tab:endpoints}. Equation~\eqref{eq:phrasings} is what leaves
+the single-agent baseline unaffected: the baseline passes the same
+string as both original and rewritten, $Q$ collapses to one phrasing,
+and Equation~\eqref{eq:union} reduces to the pre-existing
+behavior. Section~\ref{sec:results} is therefore a before/after on the
+multi-agent arm alone.
+
+Documents from different phrasings and endpoints overlap heavily, so
+$C$ is deduplicated by an identity function
+\begin{equation}
+\kappa(d) =
+\begin{cases}
+u(d) & \text{if } u(d) \neq \varepsilon,\\
+\mathrm{fold}\big(\mathrm{title}(d) \,\|\, \mathrm{source}(d)\big) & \text{otherwise,}
+\end{cases}
+\label{eq:key}
+\end{equation}
+where $u(d)$ is the document's URL, $\varepsilon$ the empty string, and
+$\|$ string concatenation. The URL is the reliable identifier. The
+title-and-source fallback exists only for feeds that omit it and is
+deliberately not the primary key, because titles repeat systematically
+within a feed --- every CISA KEV row is formatted from one template.
+
+Deduplication is order-preserving and runs per trust tier, with the
+Tier~1 key set pre-seeded into the Tier~2 pass so that a document
+reachable from both tiers appears only in the higher one:
+\begin{equation}
+P_1 = \mathrm{dedupe}(C_1), \qquad
+P_2 = \mathrm{dedupe}\big(C_2 \,;\, \{\kappa(d) : d \in P_1\}\big),
+\label{eq:tiers}
+\end{equation}
+where $C_1$ and $C_2$ are the verified and community subsets of $C$,
+concatenated vendor-specific-first. The candidate pool is
+$P = P_1 \frown P_2$, and $P$ itself is recorded per question, so that
+``the reranker mis-ordered the document'' and ``the document was never
+fetched'' remain separable diagnoses.
+
+\begin{table}[t]
+\caption{Retrieval endpoints, trust tier, how the phrasing enters the
+request, and the condition for querying. \emph{Client-side} endpoints
+retrieve a fixed feed and filter it locally by term overlap with the
+phrasing; \emph{server-side} endpoints pass the phrasing as a request
+parameter.}
+\label{tab:endpoints}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Endpoint & Tier & Phrasing enters as & Queried when \\
+\midrule
+\texttt{/api/c/name/\{vendor\}}      & 1 & not used (vendor name only) & vendor detected ($\leq 2$ vendors) \\
+\texttt{/api/v/}                     & 1 & client-side, overlap $\geq 2$ & vendor release lookup empty \\
+Apple developer releases RSS         & 1 & client-side, overlap $\geq 1$ or Apple term & always \\
+CISA Known Exploited Vulnerabilities & 1 & client-side, overlap $\geq 2$ & always \\
+CIRCL Apple CVE Atom feed            & 1 & client-side, overlap $\geq 1$ & always \\
+\texttt{/api/reddit/query/cve}       & 1 & server-side & always \\
+\texttt{/api/v/search?q=}            & 1 & server-side, one request per term ($\leq 4$) & question mentions a model \\
+\midrule
+\texttt{/api/reddit/by-subreddit}    & 2 & client-side (\texttt{q} is the subreddit) & vendor detected ($\leq 3$ subreddits each) \\
+\texttt{/api/reddit/query/positive}  & 2 & client-side, overlap $\geq 1$ & vendor subreddit search empty \\
+Google News RSS search               & 2 & server-side, with appended terms & always \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three endpoints are conditional. The general release feed is queried
+only when the vendor-specific release lookup returned nothing, so a
+recognized vendor suppresses it, and the general community feed is
+queried only when the vendor subreddit search returned nothing. The
+model-release endpoint is reachable only through a per-term search,
+costing one request per query term, so it is gated on the question
+plausibly concerning a model --- tested against a word-boundary
+vocabulary of model names, model-shipping vendor brands, and generic
+model terminology --- and capped at four terms issued concurrently. The
+vendor release lookup is keyed on the extracted vendor name and is
+issued once per vendor irrespective of $|Q|$; it is the one endpoint
+the union does not duplicate.
+
+\subsection{Reranking Against the Original Question}\label{sec:rerank}
+
+Ranking is a separate, replaceable stage scored against $q$ when the
+caller supplies it and against $\tilde{q}$ otherwise; every caller in
+the pipeline supplies it. Let
+$\tau(d)$ be the text a reranker sees: the concatenation of the
+document title, its detail or body text, its top-voted community
+comment where one was retrieved, and its subreddit. This is the same
+text the answer synthesizer is shown, so ranking and synthesis cannot
+disagree about what a document says. A reranker is a scoring function
+$s(q, d)$; each tier is sorted by descending $s(q, \cdot)$, the sorted
+tiers are concatenated, and the cut to the top $k$ documents ($k = 4$)
+is applied once, at the end. Sorting within tier rather than over the
+flat pool preserves the verified-before-community prior: lexical
+scoring favors long community posts that repeat query terms, so a flat
+sort can return a release question's top-$k$ as four community posts
+and zero verified records. The sort is stable, so equal-scoring
+documents retain their acquisition order.
+
+Three backends are provided and selected by the environment variable
+\texttt{MARAG\_RERANK}, so the choice is an ablation arm rather than an
+assumption. Let $T(\cdot)$ denote the tokenizer, $D$ the set of
+documents passed to the ranker (one trust tier), $N = |D|$,
+$f(t,d)$ the frequency of token $t$ in $T(\tau(d))$,
+$|d| = |T(\tau(d))|$, $\overline{L}$ the mean of $|d|$ over $D$, and
+$n_t = |\{d \in D : t \in T(\tau(d))\}|$.
+
+\textbf{\texttt{none}.} The published ranking function: a substring
+boost on the head tokens of the ranking query,
+\begin{equation}
+s_{\mathrm{none}}(q, d) = \mathbf{1}\big[\exists\, w \in H(q) : w \sqsubseteq \mathrm{fold}(\mathrm{title}(d))\big],
+\label{eq:none}
+\end{equation}
+where $H(q)$ is the first four whitespace-separated tokens of $q$ of
+more than three characters and $\sqsubseteq$ is the substring
+relation. Boosted documents are moved ahead of the rest and relative
+order is otherwise preserved. This backend reproduces the scoring
+function of the previously published configuration and is retained as
+the ablation arm for the ranking stage. It is the function that is
+reproduced, not the whole earlier configuration: the ranking query
+supplied at the call site is now $q$, where the published pipeline
+supplied $\tilde{q}$.
+
+\textbf{\texttt{bm25}.} Okapi BM25 with the Robertson/Sp\"arck-Jones
+defaults $k_1 = 1.5$ and $b = 0.75$:
+\begin{equation}
+s_{\mathrm{bm25}}(q, d) = \sum_{t \in T(q)} \mathrm{idf}(t) \cdot
+\frac{f(t,d)\,(k_1 + 1)}{f(t,d) + k_1\left(1 - b + b\,\dfrac{|d|}{\overline{L}}\right)},
+\label{eq:bm25}
+\end{equation}
+\begin{equation}
+\mathrm{idf}(t) = \max\!\left(0,\; \ln \frac{N - n_t + 0.5}{n_t + 0.5}\right).
+\label{eq:idf}
+\end{equation}
+The sum runs over the token sequence of $q$, so a term the user
+repeated contributes once per occurrence. Two properties of
+Equations~\eqref{eq:bm25}--\eqref{eq:idf} are specific to this setting.
+First, $N$, $n_t$, and $\overline{L}$ are computed over $D$ --- the
+tens of documents actually being ordered --- rather than over a global
+corpus. The pool is what the ranking decision is made over, and scoring
+against it keeps this arm dependency-free and deterministic, so a
+reviewer can rerun it without a model. Second, the zero floor in
+Equation~\eqref{eq:idf} is load-bearing at this scale: a term every
+candidate shares carries $n_t = N$ and no discriminating information,
+and without the floor its negative IDF would actively demote the
+documents containing it.
+
+The tokenizer matches lowercase alphanumeric runs joined by dots, so
+version strings stay whole --- \texttt{6.18.21} is one token, not three
+--- and a leading \texttt{v} immediately followed by a digit is
+stripped, so a release note writing \texttt{v6.18.21} tokenizes
+identically to the \texttt{6.18.21} a user typed. Version identity is
+the most load-bearing match in this domain --- whether a document
+concerns the version being asked about usually decides whether it is
+relevant at all --- and that decision must not depend on the prefix
+convention of the source that published it.
+
+\textbf{\texttt{embed}.} Cosine similarity between query and document
+embeddings,
+\begin{equation}
+s_{\mathrm{emb}}(q, d) = \frac{\phi(q) \cdot \phi(\tau(d))}{\lVert \phi(q) \rVert \, \lVert \phi(\tau(d)) \rVert},
+\label{eq:embed}
+\end{equation}
+where $\phi$ is the \texttt{nomic-embed-text} embedding served locally
+through Ollama, applied to the first 4{,}000 characters of its
+input. The score is zero when either vector is empty, the dimensions
+disagree, or either norm is zero. Embeddings are memoized per process,
+and the reranker itself is constructed once per process: the same
+documents recur across the retry loop and across systems sharing a
+candidate pool, and building a reranker per retrieval discarded the
+cache before it could be hit while paying an availability probe on
+every question. The embedding model runs locally, so no closed-model
+API is required to reproduce a run.
+
+The embedding backend degrades honestly rather than silently. If no
+embedding model answers the availability probe, it falls back to BM25
+but reports its specification as \texttt{bm25(fallback from
+embed:\textit{model})} and sets a \texttt{degraded} flag that the
+Retriever propagates to the evaluation harness, so a results table
+cannot attribute a lexical run to a semantic backend. An unknown
+specification raises rather than defaulting, so a typo in an ablation
+sweep fails loudly instead of quietly measuring the wrong arm. Because
+the backend performs network calls at ranking time, it can also fail
+after a successful probe; ranking then degrades to BM25 and, failing
+that, to the Retriever's own acquisition order, so adding a ranking
+stage does not make retrieval capable of raising.
+
+\subsection{Retrieval Cost of the Union}\label{sec:retrieval-cost}
+
+Equation~\eqref{eq:union} adds one request per phrasing-parameterized
+endpoint admitted by Table~\ref{tab:endpoints}, and none for the vendor
+release lookup, which is keyed on the vendor name. The union is
+therefore slightly less than a doubling of retrieval calls. For a
+question with no model mention and a recognized vendor whose lookups
+return documents, the request count rises from 13 to 24; for a question
+with no recognized vendor, from 7 to 14. An open model gate adds up to
+4 concurrent per-term searches per phrasing on top of either figure. No
+additional language model calls are incurred: the Query Rewriter is
+invoked once either way, and reranking is either arithmetic over the
+pool or one local embedding call per distinct document.
+
+On the ten-question ground-truth set, mean end-to-end latency is
+approximately 23~s per question for the multi-agent pipeline against
+approximately 12~s for the single-agent baseline. That gap is not
+attributable to the union alone; it also covers the Query Rewriter's
+generation call, the Evaluator's scoring pass, and any retrieval retry
+the Evaluator triggers, none of which the baseline performs. The
+defensible statement is narrower. The remedy for the fetch-time defect
+costs roughly one additional set of retrieval calls per question, and
+the multi-agent configuration as a whole reaches retrieval parity with
+the baseline at approximately twice its latency.
+
+\subsection{Answer Generation}
+
+Retrieved documents are synthesized into a final answer using a
+structured prompt. The prompt constrains generation to information
+contained in retrieved sources and defines explicit behavior for
+common retrieval outcomes.
+
+The synthesis process follows six rules:
+
+\begin{enumerate}
+\item Summarize matching community discussions and associated comments.
+\item Report version-specific information when present in release notes.
+\item Explicitly state when retrieved sources do not directly answer the question.
+\item Do not generate unsupported version numbers, fixes, or CVE identifiers.
+\item Restrict claims to information contained in retrieved sources.
+\item Report when no matching vendor-specific information is available.
+\end{enumerate}
+
+\subsection{Experimental Setup}
+
+The evaluation dataset consists of 50 software update questions
+spanning security, bug, release, community, and general software
+maintenance topics. The local fallback dataset contains 324 Reddit
+posts collected through the software ecosystem data lake and filtered
+using minimum quality criteria of at least 10 comments, 3 author
+replies, and a quality score of at least 0.30.
+
+The single-agent baseline performs query rewriting, retrieval
+evaluation, and answer generation within a single agent without
+specialized agents, adaptive retry, or self-improvement memory. It
+uses the same retrieval endpoints and answer synthesis prompt as the
+proposed architecture, isolating the effect of architectural
+decomposition.
+
+All experiments were performed using Llama~3.1~8B executed through
+Ollama with temperature set to zero. The evaluation platform consisted
+of Apple Silicon hardware with 24\,GB memory and Metal GPU
+acceleration.
+
+\section{Results}\label{sec:results}
+
+This section presents the evaluation results of the proposed adaptive
+multi-agent RAG architecture. The evaluation examines retrieval quality,
+answer accuracy, adaptive feedback behavior, self-improvement
+performance, representative examples, failure modes, and implementation
+observations using a dataset of 50 software update questions.
+
+\subsection{Two Metrics, Two Orderings}\label{sec:two-metrics}
+
+We first report retrieval quality under the score used in the conference
+version of this work, and then under standard information-retrieval metrics.
+The two disagree, and the disagreement is the entry point to this section's
+main result.
+
+The bespoke score is a keyword- and source-overlap measure between the question
+and the retrieved set, computed by the Evaluator agent
+(Section~\ref{sec:method}). Under it, the multi-agent architecture improved on
+the single-agent baseline in all five question categories, from 0.680 to 0.798
+overall --- a 17.2\% relative improvement, with a paired $t$-test over the 50
+evaluation queries yielding $t(49)=2.32$, $p=0.020$.
+
+We then re-scored the same pipeline with nDCG@$k$, Recall@$k$, and MRR. Graded
+relevance labels were pooled across systems: every document retrieved by any
+system for a question was judged once, and the resulting label was reused for
+every system that retrieved it, so no system is scored against a private set of
+judgments. Table~\ref{tab:inversion} reports the result on the ten
+ground-truth validation questions.
+
+\begin{table}[t]
+\caption{The same two systems under the paper's own retrieval-quality score and
+under standard IR metrics. Bespoke score: $n=50$. IR metrics: $n=10$, pooled
+graded relevance, judge \texttt{llama3.1}.}
+\label{tab:inversion}
+\begin{tabular}{lrrrr}
+\toprule
+System & bespoke score & nDCG@1 & nDCG@3 & MRR \\
+\midrule
+Single-agent baseline & 0.680 & \textbf{0.800} & \textbf{0.765} & \textbf{0.800} \\
+Multi-agent           & \textbf{0.798} & 0.133 & 0.145 & 0.250 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The ordering reverses. A 17.2\% advantage on one metric coexists with roughly a
+five-fold deficit on another, over the same questions, the same live corpus, and
+the same retrieved documents. Because the bespoke score rewards overlap between
+the question and the retrieved set without reference to whether a retrieved
+document actually answers the question, it can be maximized by retrieving many
+topically adjacent documents. Standard IR metrics, scored against judged
+relevance, cannot be.
+
+\subsection{Localizing the Loss: Ranking or Retrieval?}\label{sec:localizing}
+
+A deficit of this size has two candidate explanations. Either the pipeline
+retrieves appropriate documents and orders them badly, or it does not retrieve
+them. These call for different fixes, and they are indistinguishable from the
+final top-$k$ alone.
+
+The vocabulary-mismatch framing that motivates query rewriting in the literature
+invites the first reading, and it is the one we pursued first. The retriever's
+ordering was a substring boost computed over the first four tokens of the
+rewritten query, which after a rewrite are typically filler
+(Section~\ref{sec:rerank}). We replaced it with three progressively stronger
+rerankers scored against the user's original question.
+Table~\ref{tab:ranking-ablation} reports the outcome.
+
+\begin{table}[t]
+\caption{Ranking and retrieval ablation on the multi-agent arm ($n \le 10$).
+Panel~(a): with only the rewritten phrasing retrieved, successively stronger
+ranking functions raise MRR monotonically while nDCG@3 stays flat --- the
+signature of a candidate set that does not contain the answer. Panel~(b): with
+both phrasings retrieved and the pools merged, every configuration improves
+sharply, and the choice of which phrasing to \emph{rank} against is worth far
+less (0.597 versus 0.621) than the choice of which to \emph{retrieve} with.
+Rows come from separate runs against live sources and are therefore not strictly
+paired; the panel~(a)/(b) contrast is large enough to survive that, the
+within-panel~(b) contrast is not.}
+\label{tab:ranking-ablation}
+\begin{tabular}{llrrr}
+\toprule
+Ranking function & Scored against & nDCG@3 & MRR & Recall@5 \\
+\midrule
+\multicolumn{5}{l}{\emph{(a) Single-phrasing retrieval: the rewritten query only}} \\
+Substring boost & original question & 0.145 & 0.250 & 0.145 \\
+Okapi BM25      & original question & 0.212 & 0.500 & 0.203 \\
+Embedding cosine & original question & 0.188 & 0.625 & 0.327 \\
+\midrule
+\multicolumn{5}{l}{\emph{(b) Union retrieval: both phrasings issued, pools merged}} \\
+Substring boost & rewritten query  & 0.597 & 0.650 & 0.650 \\
+Substring boost & original question & 0.621 & 0.667 & 0.611 \\
+Embedding cosine & original question & \textbf{0.973} & \textbf{1.000} & \textbf{0.933} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Within panel~(a), MRR rises monotonically from 0.250 to 0.625, confirming that
+ranking was genuinely defective: better ranking does place better documents
+first among those available. But nDCG@3 stays near 0.19 throughout. A ranking
+intervention that improves ranking without closing the gap is evidence that the
+gap is not a ranking problem.
+
+Panel~(b) makes the same point from the other direction, and also bounds our own
+claim. Once both phrasings are retrieved, even the original substring boost ---
+the weakest ranking function available, and the one the pipeline shipped with
+--- reaches nDCG@3 of 0.597, four times its panel~(a) value. Ranking the merged
+pool against the original question rather than the rewrite adds 0.024 on top of
+that (0.621 versus 0.597), a difference we do not regard as established at this
+sample size. In other words: of the two changes we made, the one we made first
+and reasoned about most carefully --- ranking against the user's question ---
+turns out to matter far less than simply retrieving with both phrasings. We
+report this because it is the opposite of the order in which we found it, and
+because a reader deciding what to adopt should adopt the union first.
+
+We therefore stopped inferring from scores and counted documents directly. For
+each question we took the documents the single-agent baseline retrieved that the
+judge had labelled relevant, and asked whether each appeared anywhere in the
+multi-agent pipeline's retrieved set:
+
+\begin{quote}
+Of the 23 relevant documents the single-agent baseline retrieved across the
+evaluation set, \textbf{22 were never retrieved by the multi-agent pipeline at
+all.}
+\end{quote}
+
+The cause is a wiring property rather than a modelling one. Every retrieval
+endpoint was being issued the rewritten query \emph{instead of} the user's
+question. The rewrite is a lossy paraphrase --- it is designed to be, since its
+purpose is to substitute domain vocabulary for user vocabulary --- and the
+documents matching the user's own phrasing were consequently never candidates.
+No reranker can promote a document that was never retrieved, which is precisely
+what Table~\ref{tab:ranking-ablation} shows.
+
+The remedy follows directly and is stated in Section~\ref{sec:union-fetch}: issue
+both phrasings and union the candidate pools. The final row of
+Table~\ref{tab:ranking-ablation} gives its effect --- nDCG@3 from 0.188 to 0.973
+in a single change, with no modification to ranking, generation, or the
+evaluator. Notably, the multi-agent pipeline had all along been retrieving
+relevant documents the baseline missed; its candidate set was not worse so much
+as \emph{different and smaller}, which is why unioning rather than replacing
+recovers the loss.
+
+\subsection{Evaluation at Scale}\label{sec:scaled-eval}
+
+The preceding measurements use ten ground-truth questions and are diagnostic
+rather than conclusive. To test whether the repaired pipeline holds up, we
+evaluated on a 100-question stratified subset of the 300-question benchmark
+(Section~\ref{sec:method}), balanced across all five question categories at 20
+each and covering 21 of the 24 software ecosystems. Ninety-six questions
+completed across all three systems and are reported here.
+
+Three systems were run with the synthesis model held constant at Llama 3.1 8B,
+which isolates architecture from model:
+
+\begin{itemize}
+  \item \textbf{marag} --- the multi-agent pipeline as described, whose answer is
+  a template assembled by the Evaluator agent from the retrieved documents.
+  \item \textbf{marag\_llm} --- identical retrieval, but the answer is
+  synthesized in prose through the same prompt the baseline uses. This arm
+  exists solely so that answer-quality scores are comparable.
+  \item \textbf{single\_agent} --- the baseline: raw query, one retrieval pass,
+  one synthesis call.
+\end{itemize}
+
+\begin{table}[t]
+\caption{Retrieval quality on the 100-question stratified benchmark subset
+($n=96$), pooled graded relevance, judge \texttt{llama3.1}. Brackets give
+bootstrap 95\% confidence intervals. The two retrieval arms are identical by
+construction; they differ only in answer synthesis.}
+\label{tab:scaled-retrieval}
+\begin{tabular}{lrrrr}
+\toprule
+System & nDCG@3 & nDCG@5 & MRR & Recall@5 \\
+\midrule
+marag         & 0.865 [0.80, 0.92] & 0.867 [0.81, 0.92] & 0.892 [0.83, 0.95] & 0.866 [0.80, 0.92] \\
+marag\_llm    & 0.865 [0.80, 0.92] & 0.867 [0.81, 0.92] & 0.892 [0.83, 0.95] & 0.866 [0.80, 0.92] \\
+single\_agent & 0.869 [0.81, 0.92] & 0.876 [0.82, 0.93] & 0.895 [0.83, 0.95] & 0.875 [0.82, 0.93] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:scaled-retrieval} reports retrieval quality. The repaired
+multi-agent pipeline and the single-agent baseline are indistinguishable: every
+difference is well within overlapping confidence intervals, and the baseline is
+nominally ahead on all four metrics. The fetch-time diagnostic of
+Section~\ref{sec:localizing}, recomputed on this larger set, falls from 96\% (22
+of 23) to \textbf{14.7\%} (23 of 156): the union remedy holds at scale, and the
+residual is the ordinary variation of two systems retrieving from live sources.
+
+\begin{table}[t]
+\caption{Answer quality and cost ($n=96$), LLM-judged. \texttt{marag} and
+\texttt{marag\_llm} share a retrieval pipeline and differ only in how the answer
+is produced. Latency is the per-question median in seconds.}
+\label{tab:scaled-answer}
+\begin{tabular}{lrrr}
+\toprule
+System & Faithfulness & Answer relevance & Latency (s) \\
+\midrule
+marag (template answer) & 0.702 & 0.977 & 19.6 \\
+marag\_llm (prose answer) & 0.924 & 0.952 & 21.1 \\
+single\_agent & 0.929 & 0.973 & 9.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:scaled-answer} carries a methodological result worth stating
+separately. Comparing \texttt{marag} against \texttt{single\_agent} on
+faithfulness suggests a substantial deficit (0.702 versus 0.929). Comparing
+\texttt{marag\_llm} against \texttt{single\_agent} --- the same retrieval, the
+same documents, differing only in whether the answer is a structured template or
+model prose --- gives 0.924 versus 0.929. The apparent deficit was almost
+entirely an artifact of answer \emph{format}: an LLM judge scoring a structured
+template against fluent prose is partly scoring fluency. Any evaluation
+comparing an agentic system that emits structured output against a baseline that
+emits prose is exposed to this, and we would not have detected it without an arm
+constructed specifically to remove it.
+
+On cost, the multi-agent pipeline takes approximately twice the median
+per-question latency of the baseline (19.6\,s versus 9.5\,s). This reflects the
+rewriter's generation call, the evaluator pass, and the additional retrieval
+calls the union incurs.
+
+\subsection{Summary of Findings}\label{sec:results-summary}
+
+\begin{enumerate}
+  \item The bespoke retrieval-quality score and standard IR metrics order the
+  two architectures oppositely on the same data (Table~\ref{tab:inversion}).
+  \item The multi-agent pipeline's deficit under IR metrics was caused by
+  retrieval, not ranking: 22 of 23 relevant documents were never retrieved,
+  and three reranker generations could not recover them
+  (Table~\ref{tab:ranking-ablation}, panel~(a)). Once both phrasings are
+  retrieved, even the original weak ranking function recovers most of the
+  deficit, and which phrasing is ranked against adds little
+  (panel~(b)).
+  \item Issuing both the original and rewritten phrasings and unioning the
+  candidate pools removes the deficit, and the remedy holds on a
+  100-question multi-ecosystem benchmark, where the fetch-time loss falls from
+  96\% to 14.7\%.
+  \item With both defects repaired and the synthesis model held constant, the
+  multi-agent architecture \emph{matches} the single-agent baseline on retrieval
+  and on faithfulness, at roughly twice the latency
+  (Tables~\ref{tab:scaled-retrieval} and~\ref{tab:scaled-answer}). We do not
+  find evidence that decomposition improves retrieval quality in this domain.
+  \item A substantial apparent faithfulness gap between the two architectures
+  was an artifact of answer format rather than answer content.
+\end{enumerate}
+
+\subsection{Answer Accuracy}
+
+To evaluate answer quality beyond retrieval metrics, the system was
+tested on version-specific software update questions. For example, the
+system correctly identified Linux v7.0.0 (released April 13, 2026) and
+Firefox v149.0.1 (released April 7, 2026) from the corresponding
+release sources. All reported version numbers were traceable to
+retrieved documents.
+
+A supplementary evaluation using ten questions from the live questions
+endpoint produced four fully correct answers and six partially correct
+answers. Across these questions, the system did not generate any
+unsupported version numbers, release dates, or software update claims.
+All version-specific information appearing in generated answers could be
+traced to retrieved release notes or other retrieved documents.
+
+Figure~\ref{fig:siri_example} presents a representative software update
+question. The question concerns Siri behavior following the iOS~26.4
+update. The Retriever identified the relevant vendor, collected
+release and community information, and the generated answer reflected
+information contained in the retrieved sources.
+
+\begin{figure*}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={
+      rectangle,
+      draw,
+      rounded corners,
+      text centered,
+      align=center,
+      minimum height=0.8cm,
+      font=\small,
+      fill=white
+  },
+  agent/.style={
+      box,
+      fill=blue!10
+  },
+  answer/.style={
+      box,
+      fill=gray!10
+  },
+  arrow/.style={
+      ->,
+      thick,
+      >=stealth
+  }
+]
+
+% ==================================================
+% Example Query
+% ==================================================
+
+\node[
+    box,
+    fill=gray!10,
+    minimum width=8.2cm
+] (query) at (0,6.2)
+{
+\textbf{User Question}\\
+``Are there known Siri issues following the iOS 26.4/26.4.1 updates?''
+};
+
+% ==================================================
+% Left Side : Single-Agent RAG
+% ==================================================
+
+\node[
+    agent,
+    minimum width=4.8cm,
+    minimum height=2.4cm
+] (single) at (-6.0,2.8)
+{
+Single-Agent RAG\\[4pt]
+Query Rewriting\\
+Retrieval\\
+Evaluation\\
+Answer Generation
+};
+
+\node[
+    answer,
+    minimum width=6.0cm,
+    text width=5.4cm
+] (ans1) at (-6.0,-1.2)
+{
+\textbf{Generated Answer}\\
+``Try updating Siri settings. The issue may
+have been fixed in a recent update.''\\[2pt]
+\textit{Limited supporting evidence}
+};
+
+% ==================================================
+% Divider
+% ==================================================
+
+\draw[gray!50, very thick]
+(-0.6,-3.0) -- (-0.6,5.2);
+
+% ==================================================
+% Right Side : Multi-Agent RAG
+% ==================================================
+
+\node[
+    agent,
+    minimum width=4.8cm
+] (orch) at (6.8,4.1)
+{
+Multi-Agent RAG\\
+Orchestrator Agent
+};
+
+\node[
+    agent,
+    minimum width=3.5cm
+] (rw) at (2.8,1.8)
+{
+Query Rewriter\\
+Agent
+};
+
+\node[
+    agent,
+    minimum width=3.5cm
+] (ret) at (6.8,1.8)
+{
+Retriever\\
+Agent
+};
+
+\node[
+    agent,
+    minimum width=3.5cm
+] (eval) at (10.8,1.8)
+{
+Evaluator\\
+Agent
+};
+
+\node[
+    answer,
+    minimum width=9.2cm,
+    text width=8.5cm
+] (ans2) at (6.8,-2.0)
+{
+\textbf{Generated Answer}\\
+``Community discussions and release
+documentation indicate that iOS~26.4
+introduced changes affecting Siri offline
+task execution. Multiple users report the
+same behavior following the update.''\\[2pt]
+\textit{Grounded in retrieved sources}
+};
+
+% ==================================================
+% Connections
+% ==================================================
+
+\draw[arrow]
+(query.south west)
+-- ++(-2.0,-0.45)
+-- (single.north);
+
+\draw[arrow]
+(single.south)
+-- (ans1.north);
+
+\draw[arrow]
+(query.south east)
+-- ++(2.0,-0.45)
+-- (orch.north);
+
+\draw[arrow]
+(orch.south)
+-- ++(0,-0.45)
+-| (rw.north);
+
+\draw[arrow]
+(orch.south)
+-- (ret.north);
+
+\draw[arrow]
+(orch.south)
+-- ++(0,-0.45)
+-| (eval.north);
+
+\draw[arrow]
+(ret.south)
+-- (ans2.north);
+
+\end{tikzpicture}%
+}
+\caption{
+Illustrative comparison of single-agent and multi-agent RAG
+architectures on a software update question.
+}
+\label{fig:siri_example}
+\end{figure*}
+
+\subsection{Example Multi-Agent Execution}
+
+Figure~\ref{fig:execution_trace} illustrates a representative execution
+of the proposed architecture on a software update question. The Query
+Rewriter Agent reformulates the user question to improve retrieval
+coverage, the Retriever Agent gathers evidence from software ecosystem
+documents, and the Evaluator Agent assigns a retrieval quality score
+before answer generation. This example demonstrates how retrieval and
+evaluation are separated into specialized agents within the proposed
+architecture.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{Figures/execution_trace.png}
+\caption{
+Example execution trace of the Query Rewriter, Retriever, and Evaluator agents.
+}
+\label{fig:execution_trace}
+\end{figure}
+\subsection{Adaptive Feedback}
+
+The Evaluator triggered retrieval retries when the initial retrieval
+quality score fell below $\theta = 0.30$. In these cases, the
+Orchestrator executed an additional retrieval cycle using a revised
+query generated by the Query Rewriter. This behavior occurred without
+manual intervention during evaluation and allowed retrieval to continue
+when the initial result set was insufficient.
+
+\subsection{Self-Improvement Behavior}
+
+Retrieval quality, as measured by the bespoke score, increased from a mean of
+0.756 in the first evaluation tertile ($Q_1$--$Q_{17}$) to 0.826 in the final
+tertile ($Q_{34}$--$Q_{50}$), corresponding to a 9.3\% increase.
+
+This comparison is confounded, and we report it with that caveat rather than as
+a result. Tertiles are ordered in time, and the system retrieves from live
+sources whose contents change over the course of a run, so corpus drift is not
+separable from adaptation in this design. Establishing the effect requires
+either a frozen corpus snapshot or an interleaved design in which memory is
+enabled and disabled across the question order. The mechanism is sound and its
+learned terms are interpretable (Table~\ref{tab:learned_terms}); the magnitude
+reported here is not established.
+
+A paired $t$-test comparing the first and last tertiles yielded
+$t(16)=2.18$ and $p=0.043$ (two-tailed). The corresponding effect size
+was Cohen's $d=0.83$ \cite{cohen1960coefficient}.
+
+During evaluation, 27 query-expansion terms accumulated positive scores
+in the Self-Improvement Memory. Table~\ref{tab:learned_terms} lists the
+ten highest-scoring terms.
+
+\begin{table}[h]
+\centering
+\caption{Highest-Scoring Learned Terms}
+\label{tab:learned_terms}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{llcl}
+\toprule
+\textbf{Rank} & \textbf{Term} & \textbf{Cumulative Score} & \textbf{Interpretation} \\
+\midrule
+1 & vulnerability & +2.20 & Security terminology \\
+2 & patch & +1.58 & Fix-related terminology \\
+3 & advisory & +1.23 & Advisory terminology \\
+4 & update & +1.15 & General update terminology \\
+5 & kernel & +0.98 & Vendor-specific terminology \\
+6 & release & +0.87 & Version-related terminology \\
+7 & bug & +0.76 & Defect-related terminology \\
+8 & fix & +0.71 & Resolution terminology \\
+9 & version & +0.68 & Version-related terminology \\
+10 & security & +0.64 & Security terminology \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\subsection{Representative User Questions and Answers}
+
+Table~\ref{tab:examples} presents representative examples from the
+evaluation dataset. The examples include correctly answered queries,
+partially relevant answers, and incorrect answers.
+
+\begin{table*}[t]
+\centering\small
+\caption{Representative Questions Examples}
+\label{tab:examples}
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.1}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{p{3.8cm}p{1.45cm}p{4.4cm}p{2.7cm}p{0.7cm}}
+\toprule
+\textbf{Question} & \textbf{Vendor} & \textbf{Multi-Agent Answer} & \textbf{Evaluator Note} & \textbf{Result} \\
+\midrule
+\multicolumn{5}{l}{\textit{(A) Correctly Answered}} \\
+\midrule
+Q1: What is the latest version of Firefox?
+   & firefox
+   & v149.0.1, released April~7~2026.
+   & Exact release note match.
+   & \textcolor{green!60!black}{\textbf{\ding{51}}} \\
+
+Q2: Are there known Siri issues following the iOS 26.4/26.4.1 updates?
+   & ios
+   & iOS~26.4 changed Siri offline mode. r/applehelp confirms.
+   & Multiple sources retrieved.
+   & \textcolor{green!60!black}{\textbf{\ding{51}}} \\
+
+Q3: G6 Bullet unstable?
+   & Ubiquiti
+   & Community reports instability; firmware update available.
+   & Alias resolved to vendor.
+   & \textcolor{green!60!black}{\textbf{\ding{51}}} \\
+\midrule
+\multicolumn{5}{l}{\textit{(B) Partially Relevant}} \\
+\midrule
+Q4: Would an IKEA hub update devices more reliably?
+   & homeassistant
+   & Home Assistant integration information retrieved.
+   & Sub-vendor not represented in registry.
+   & \textcolor{orange!80!black}{\textbf{$\sim$}} \\
+
+Q5: Can't upload photos on iOS to Immich
+   & ios
+   & iOS information retrieved; limited Immich coverage.
+   & Third-party application not present in vendor sources.
+   & \textcolor{orange!80!black}{\textbf{$\sim$}} \\
+
+Q6: Do I have to say goodbye to Windows to switch to Linux?
+   & linux
+   & General Linux information retrieved.
+   & Opinion-oriented question.
+   & \textcolor{orange!80!black}{\textbf{$\sim$}} \\
+\midrule
+\multicolumn{5}{l}{\textit{(C) Incorrectly Answered}} \\
+\midrule
+Q7: What was the Linux version on January~1st~2026?
+   & linux
+   & Returned v7.0.0 instead of v6.18.0.
+   & Date constraint not applied.
+   & \textcolor{red!70!black}{\textbf{\ding{55}}} \\
+
+Q8: Synology NAS unreachable after upgrade
+   & (none)
+   & No vendor detected.
+   & Vendor extraction failure.
+   & \textcolor{red!70!black}{\textbf{\ding{55}}} \\
+
+Q9: What small IT task always turns into a nightmare?
+   & (none)
+   & No relevant documents retrieved.
+   & Non-factual question.
+   & \textcolor{red!70!black}{\textbf{\ding{55}}} \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}
+
+\subsection{Failure Analysis}
+
+The three incorrect examples in Table~\ref{tab:examples} correspond to
+three recurring failure modes observed during evaluation.
+
+\paragraph{Temporal Question Filtering.}
+The question ``What was the Linux version on January 1st 2026?'' returned
+the latest Linux release rather than the release available on the
+specified date. The query rewriter preserved the temporal constraint,
+but the constraint was not passed to the retrieval endpoint.
+
+\paragraph{Vendor Extraction Failure.}
+The question ``Synology NAS unreachable after upgrade'' did not produce a
+vendor match and therefore fell back to general retrieval. This
+occurred because important domain-specific terms were removed during
+preprocessing.
+
+\paragraph{Opinion-Oriented Queries.}
+The question ``What small IT task always turns into a nightmare?''
+contains no software vendor reference and does not correspond to a
+factual software update question. The system correctly failed to locate
+relevant documents but did not explicitly reject the question.
+
+These three cases account for the incorrect examples reported in
+Table~\ref{tab:examples}.
+
+\subsection{Implementation Comparison}
+
+The architecture was implemented using Pure Python, LangChain, and
+smolagents. All three implementations produced equivalent retrieval
+results on the evaluation dataset.
+
+The Pure Python implementation provided the most direct execution
+trace. LangChain exposed additional intermediate execution information
+through callback logging. Within smolagents, ToolCallingAgent executed
+reliably with Llama~3.1~8B, whereas Code Agent occasionally generated
+invalid tool calls and repeated execution cycles.
+
+\subsection{Qualitative Analysis}
+
+Execution traces showed the Orchestrator coordinating query rewriting,
+retrieval, evaluation, and answer synthesis across multiple document
+sources. Retrieved documents were incorporated into generated answers
+only after evaluation. Detailed execution traces are omitted due to
+space constraints.
+
+\section{Discussion}\label{sec:discussion}
+
+\subsection{What Generalizes}\label{sec:generalizes}
+
+The finding most likely to transfer to other systems is also the simplest to
+state: \emph{a rewriting agent must add to the retrieval it performs, not
+substitute for it.} The distinction is easy to lose because it is not visible
+in the agent's own output. A rewritten query inspected in isolation looks
+correct --- it names the vendor, uses release-note vocabulary, and reads like a
+well-formed search. What is invisible at that level is that issuing it
+\emph{instead of} the user's question silently narrows the candidate set, and
+that the narrowing is unrecoverable downstream. Our pipeline exhibited this for
+its entire development history without any component appearing to malfunction.
+
+Three properties made it hard to see, and each is a property of agentic
+pipelines generally rather than of this system:
+
+\begin{itemize}
+  \item \textbf{The failure is in the wiring, not in a component.} Every agent
+  did its own job correctly. The rewriter produced good rewrites; the retriever
+  faithfully queried what it was given; the reranker correctly ordered what it
+  received. Component-level testing cannot detect this, because no component is
+  wrong.
+
+  \item \textbf{The aggregate metric moved the right way.} The bespoke
+  retrieval-quality score rose when the architecture was introduced, which is
+  what a designer checks. A score computed over the retrieved set cannot report
+  documents that were never retrieved --- their absence is not an observation it
+  is capable of making.
+
+  \item \textbf{A plausible cause absorbed the evidence.} Query rewriting is
+  motivated in the literature by vocabulary mismatch, so a retrieval deficit
+  after rewriting invites a ranking explanation. We pursued that explanation
+  first, built three rerankers, and improved MRR by 150\% without materially
+  moving nDCG. Only the residual gap indicated that the diagnosis was wrong.
+\end{itemize}
+
+The last point suggests a diagnostic worth generalizing. When an intervention
+improves the metric it targets while leaving the outcome metric unchanged, the
+intervention is likely addressing a real but secondary defect. In retrieval
+specifically, MRR improving while nDCG@$k$ and Recall@$k$ stay flat is the
+signature of a candidate set that does not contain the answer, and it is
+distinguishable from a ranking problem only by inspecting the candidate set
+directly. We therefore instrumented the pipeline to expose its pre-rerank pool,
+so that ``the reranker mis-ordered it'' and ``it was never retrieved'' are
+separable diagnoses rather than a single unexplained score.
+
+\subsection{What Multi-Agent Decomposition Did and Did Not Buy}
+\label{sec:decomposition}
+
+With both defects repaired and the synthesis model held constant, the
+multi-agent architecture matches the single-agent baseline on retrieval quality
+and on faithfulness, at approximately twice the latency
+(Section~\ref{sec:scaled-eval}). We report this as the result rather than
+searching for a configuration that reverses it.
+
+This does not establish that decomposition is worthless, and we are careful not
+to claim it does. It establishes that on this benchmark, for this domain, with
+these metrics, decomposition did not improve answer quality over a
+well-configured single-agent baseline --- and that the improvement originally
+attributed to decomposition was an artifact of the metric used to measure it.
+Three qualifications bound that claim:
+
+\begin{itemize}
+  \item The baseline is not weak. It queries the same live endpoints, uses the
+  same synthesis prompt, and benefits from the same reranking stage. A weaker
+  baseline --- one without vendor-aware retrieval, or restricted to a single
+  source --- would likely lose, but the comparison would not isolate
+  architecture.
+
+  \item Retrieval quality is not the only axis on which decomposition might pay.
+  The architecture's failure traceability is real and is not captured by nDCG:
+  when an answer is wrong, the pipeline localizes the fault to vendor
+  extraction, query reformulation, retrieval coverage, evaluation, or synthesis.
+  For a system intended to be maintained rather than merely benchmarked, this
+  has value that our metrics do not score.
+
+  \item The evaluator agent's ability to decline is likewise unscored here.
+  Returning ``the retrieved sources do not answer this'' is preferable to a
+  confident wrong version number in a maintenance context, and the CRAG-style
+  scoring we implement rewards exactly that asymmetry --- but our ground-truth
+  coverage is too small for it to carry weight.
+\end{itemize}
+
+\subsection{Metric Design as a Threat to Architectural Claims}
+\label{sec:metric-threat}
+
+The 17.2\% improvement was not fabricated; it is what the score we defined
+reports, and it reproduces. The problem is what the score is capable of
+observing. A measure of overlap between a question and the documents retrieved
+for it rewards retrieving topically adjacent material, and a rewriting agent
+that expands a question into vendor and release-note vocabulary produces
+precisely that. The metric and the mechanism were, in effect, correlated
+through the same vocabulary.
+
+We think this is a general hazard for agentic-system evaluation rather than a
+mistake peculiar to this work. Domain-specific systems frequently define
+domain-specific quality measures, with good justification: standard IR metrics
+require relevance judgments, which are expensive. But a bespoke measure designed
+by the same people who designed the architecture will tend to reward the
+behaviors the architecture produces. The practical mitigation is not to abandon
+domain measures but to report at least one metric whose definition is
+independent of the system --- pooled-judgment IR metrics, or a deterministic
+benchmark score --- and to treat a disagreement between them as a finding
+requiring explanation rather than a discrepancy to be reconciled toward the
+preferred result.
+
+Our answer-quality measurements carry the same lesson in a second form.
+Comparing the multi-agent system's structured template against the baseline's
+prose showed a 0.23 faithfulness deficit that disappeared entirely when the same
+retrieved documents were synthesized through the baseline's own prompt
+(Section~\ref{sec:scaled-eval}). An LLM judge comparing structured output
+against fluent prose is partly scoring fluency. Any evaluation of an agentic
+system that emits structured output against a baseline that emits prose is
+exposed to this, and detecting it required constructing an arm for no purpose
+other than removing the confound.
+
+\subsection{Observations That Survive}\label{sec:survives}
+
+Several observations from the original evaluation are unaffected by the
+corrections above, because they do not depend on the architecture comparison.
+
+\begin{itemize}
+  \item \textbf{Heterogeneous sources provide complementary evidence.} Release
+  notes give authoritative version and fix information; advisories give
+  vulnerability details and mitigations; community discussions give deployment
+  experience, regressions, and workarounds that have not reached official
+  documentation. Users frequently ask about the operational effects of an update
+  rather than its documented contents: a release note may confirm a defect was
+  fixed while community discussion reveals users still experiencing it.
+  Treating these as complementary rather than competing, and preserving the
+  distinction in the retrieved set, improves coverage without conflating
+  provenance.
+
+  \item \textbf{Source grounding constrains version-specific claims.} Across the
+  version-specific evaluation, generated answers did not contain version
+  numbers, release dates, or patch identifiers absent from the retrieved
+  documents. Incorrect version information has direct operational consequences
+  for update planning and security decisions, so this property matters
+  independently of retrieval ranking. The sample is small and this is an
+  observation rather than a guarantee.
+
+  \item \textbf{Retrieval-level adaptation operates without retraining.} Query
+  expansion terms accumulate weights from retrieval outcomes and bias subsequent
+  reformulation, with no human preference labels and no parameter updates. The
+  learned terms are interpretable on inspection. We are more cautious than the
+  conference version about the size of the effect: the tertile comparison that
+  produced the 9.3\% figure is confounded with the live corpus drifting over the
+  course of a run, and we did not control for it. The mechanism is sound; the
+  magnitude is not established.
+\end{itemize}
+
+\subsection{Implications for Software Update Question Answering}
+
+The evaluation suggests that software update question answering differs
+from traditional fact-based question answering in several respects.
+Questions frequently reference evolving software versions, incomplete
+symptom descriptions, community terminology, and information dispersed
+across multiple document sources. Consequently, retrieval quality
+becomes a central factor influencing answer quality.
+
+The results indicate that improvements in retrieval quality translate
+directly into improved answer supportability. When relevant release
+notes, advisories, and community discussions are successfully
+retrieved, the generated answer is more likely to contain verifiable
+evidence and less likely to rely on unsupported assumptions. This
+relationship motivates further investigation of retrieval-focused
+architectures for software ecosystem applications.
+
+The findings also suggest that software update question answering
+benefits from explicit uncertainty management. Questions concerning
+future releases, undocumented issues, or emerging community reports may
+not always have definitive answers. In such situations, exposing
+retrieved evidence and confidence information may be more useful than
+forcing a categorical response. Future architectures should therefore
+consider retrieval confidence as a first-class component of answer
+generation.
+
+Six limitations of the current system warrant discussion.
+
+\textbf{Data coverage lag.}
+Recent community posts may not yet be indexed in the data lake. In the
+live evaluation, some partial answers were attributable to source
+availability rather than retrieval failures. Similar issues may occur
+whenever upstream data sources introduce delays between publication and
+indexing.
+
+\textbf{Vendor alias coverage.}
+The \texttt{VENDOR\_ALIASES} dictionary currently maps common aliases
+to canonical vendor names. Queries containing unknown vendor names or
+product aliases fall back to broader retrieval logic, reducing
+precision. Future work will replace static aliases with embedding-based
+lookup over the full vendor registry.
+
+\textbf{Community-source reliability.}
+Community platforms such as Reddit provide useful information about
+deployment experiences, regressions, and workarounds, but posts are
+typically anonymous and may contain inaccurate, incomplete, or
+misleading information. A single post may not represent the broader
+experience of a software ecosystem. The current system mitigates this
+limitation by separating verified and community sources and considering
+multiple retrieved posts when available. Future work will investigate
+cross-post validation, agreement-based confidence estimation, and
+community-source credibility assessment.
+
+\textbf{Local LLM capacity.}
+Llama~3.1~8B via Ollama performs well on structured software update
+questions but occasionally over-interprets ambiguous or conversational
+queries. Larger or domain-adapted models may improve synthesis quality,
+particularly for questions requiring extensive contextual reasoning.
+
+\textbf{Evaluation scope and generalization.}
+The evaluation consists of 50 software update questions spanning five
+categories. Although diverse, this remains a relatively small sample
+compared with real-world workloads. Additionally, all evaluation
+questions are English-language. Generalization to larger datasets,
+additional languages, and different software ecosystems remains an
+open question.
+
+\textbf{Statistical impact.}
+The 17.2\% improvement on the bespoke score is statistically significant
+($p=0.020$), and this is precisely why significance is insufficient on its own:
+the effect is real, reproducible, and measured on a quantity that cannot observe
+the defect described in Section~\ref{sec:localizing}. A $p$-value bounds
+sampling error, not construct validity. The scaled evaluation
+(Section~\ref{sec:scaled-eval}) reports bootstrap confidence intervals on
+metrics whose definition is independent of this system, and under those the two
+architectures are indistinguishable.
+
+\subsection{Operational Considerations}
+
+The prototype highlights several deployment considerations. Vendor-aware
+caching improves retrieval efficiency by resolving vendor names,
+aliases, and community routes before retrieval begins. Separating
+verified and community sources provides useful distinctions between
+authoritative update information and user-reported experiences.
+
+The Evaluator Agent serves both as a retrieval scoring component and as
+a control point for retry and confidence estimation. This is
+particularly important for version-specific questions, where returning
+an explicit ``no matching source'' response may be preferable to
+generating unsupported information. The ability to reject unsupported
+answers is an important property for software maintenance applications,
+where incorrect information may directly impact
+decisions.
+
+Presenting retrieved evidence alongside generated answers improves
+answer provenance and supports auditing when errors occur. This is
+particularly useful when answers combine information from multiple
+sources because users can independently verify the supporting evidence.
+Local execution through Ollama also enables reproducible experiments
+and privacy-preserving deployment.
+
+\subsection{Reproducibility Notes}
+
+The architecture was designed so that major components can be evaluated
+independently. Vendor detection, retrieval, evaluation, and answer
+generation can each be inspected without requiring end-to-end
+execution. This modular structure simplifies debugging and enables
+systematic error analysis because failures can be associated with
+specific pipeline stages.
+
+For replication, the most important artifacts are the evaluation
+questions, vendor registry snapshot, API responses, retrieval scoring
+implementation, and system configuration. Because the system relies on
+live software ecosystem APIs, future studies should preserve response
+timestamps or snapshots. Static benchmark snapshots would facilitate
+controlled comparison across architectures, while live evaluations
+would continue to measure performance under evolving ecosystem
+conditions.
+
+\subsection{Threats to Validity}
+
+\textbf{Construct validity.}
+Retrieval quality is measured using a deterministic score emphasizing
+release-note relevance, community evidence, advisory evidence, and
+result coverage. While this enables reproducible evaluation, it may not
+capture all dimensions of answer quality such as usefulness,
+readability, user trust, or task completion effectiveness.
+
+\textbf{Internal validity.}
+The single-agent baseline uses the same retrieval endpoints and answer
+synthesis process as the proposed system, isolating the effect of
+architectural decomposition, adaptive feedback, and persistent memory.
+Implementation details such as alias coverage, endpoint freshness,
+query rewriting quality, and retrieval configuration may still
+influence measured improvements.
+
+\textbf{External validity.}
+The evaluation focuses on English-language software update questions
+and publicly available software ecosystem data sources. Results may
+differ for other languages, software ecosystems, enterprise
+repositories, or domains where release documentation and community
+discussions are limited.
+
+\subsection{Robustness of Heuristic Design Choices}
+
+Several components rely on handcrafted heuristics including retrieval
+weights, vendor aliases, retry thresholds, and confidence thresholds.
+Similar mechanisms are commonly used in corrective and adaptive RAG
+systems~\cite{yan2024crag,jiang2023flare,asai2024selfrag}.
+
+The scoring structure itself remains largely domain independent. The
+same architecture could be adapted to other document collections by
+replacing domain-specific keyword sets, aliases, and retrieval sources.
+The separation between retrieval, evaluation, and orchestration would
+remain unchanged. Future work will investigate learned reward models,
+adaptive threshold selection, and data-driven calibration methods to
+reduce manual tuning while preserving interpretability.
+
+\subsection{Future Work}
+
+Future work includes comparisons with Self-RAG, CRAG, and other
+multi-agent RAG systems, evaluation on larger and multilingual
+question sets, and investigation of learned reward models,
+embedding-based vendor matching, and adaptive threshold selection \cite{asai2024selfrag,yang2024,ranaldi2025}.
+
+Additional studies should examine retrieval adaptation across longer
+interaction histories and larger workloads to better understand the
+stability of the observed retrieval improvements. Evaluations involving
+multiple software ecosystems would also help determine whether the
+observed benefits generalize beyond the current data sources \cite{reuter2025}.
+
+Finally, future work should investigate stronger validation mechanisms
+for community-derived information, including agreement analysis across
+multiple posts, source credibility estimation, and integration of
+additional software ecosystem resources. Such mechanisms may further
+improve answer reliability while preserving the practical benefits of
+community knowledge.
+
+\section{Conclusion}\label{sec:conclusion}
+
+This paper presented a multi-agent RAG architecture for answering software
+update questions from software ecosystem documents, and an account of what
+happened when we measured it properly.
+
+Evaluated on a keyword-overlap retrieval score of our own design, the
+architecture improved on a single-agent baseline by 17.2\% ($t(49)=2.32$,
+$p=0.020$). Evaluated with standard IR metrics over pooled relevance judgments,
+it lost to the same baseline by roughly a factor of five. The disagreement was
+not a metric artifact: the query-rewriting agent's output was being issued to
+every retrieval endpoint \emph{in place of} the user's question, and 22 of the
+23 relevant documents the baseline retrieved were never retrieved by the
+multi-agent pipeline at all. Three progressively stronger rerankers raised MRR
+from 0.250 to 0.625 while leaving nDCG@3 near 0.19, because no ranking function
+can promote a document that was never a candidate.
+
+Issuing both phrasings and unioning the candidate pools resolves it. On a
+100-question benchmark spanning 24 software ecosystems, the fetch-time loss
+falls from 96\% to 14.7\%, and the repaired pipeline reaches nDCG@3 of 0.865
+against the baseline's 0.869 --- parity, within overlapping confidence
+intervals, at approximately twice the latency. We report this rather than the
+improvement our original metric showed. On this benchmark, in this domain,
+architectural decomposition did not improve retrieval quality over a
+well-configured single-agent baseline; what the original evaluation measured was
+the correlation between a bespoke metric and the vocabulary its own rewriting
+agent produced.
+
+Two further results bear on how such systems should be evaluated. An apparent
+0.23 faithfulness deficit for the multi-agent architecture proved to be an
+artifact of answer format --- a structured template judged against fluent prose
+--- and vanished when the same retrieved documents were synthesized through the
+baseline's prompt. And the failure that caused all of this was invisible at the
+component level: every agent performed its own task correctly, and only the
+retrieved set revealed the defect. We suggest that agentic pipelines be
+instrumented to expose intermediate state, in particular the pre-ranking
+candidate set, so that ``mis-ranked'' and ``never retrieved'' remain separable
+diagnoses.
+
+We release the architecture, the evaluation harness, the ranking and fetching
+ablation arms, and a 300-question benchmark spanning 24 software ecosystems and
+five question categories, mined from live release, advisory, and community
+sources.
+
+Future work includes head-to-head comparison against Self-RAG, CRAG, and
+Adaptive-RAG through the FlashRAG and RAGLAB toolkits; an independent judge to
+remove the model-family overlap between judge and system; evaluation across
+longer interaction histories to establish whether retrieval-level adaptation
+scales; and replacement of the heuristic evaluator thresholds and vendor
+matching with learned components.
+
+\section*{Acknowledgments}
+
+We thank the maintainers of public software ecosystem data sources,
+online communities, and open APIs for making software-related
+information accessible for research and analysis. Their continued
+contributions enable the collection and evaluation of real-world
+software update questions and supporting documents used in this study.
+
+\begin{thebibliography}{99}
+
+\bibitem{lewis2020rag}
+P. Lewis, E. Perez, A. Piktus, H. Schwenk, F. Schwab, D. Kiela, and E. Ouz,
+``Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks,''
+\textit{Advances in Neural Information Processing Systems},
+vol. 33, pp. 9457--9467, 2020.
+
+\bibitem{gao2024dmqr}
+Z. Li, Z. Wang, W. Wang, and others,
+``DMQR-RAG: Diverse Multi-Query Rewriting for Retrieval-Augmented Generation,''
+\textit{arXiv preprint arXiv:2411.13154}, 2024.
+
+\bibitem{cook2025rag}
+T. Cook et al.,
+``Retrieval Augmented Generation (RAG) for Fintech: Agentic Design and Evaluation,''
+\textit{arXiv https://arxiv.org/abs/2510.25518}, 2026.
+
+\bibitem{wang2024mainrag}
+C.-Y. Chang, Z. Jiang, V. Rakesh, and others,
+``MAIN-RAG: Multi-Agent Filtering Retrieval-Augmented Generation,''
+\textit{Proceedings of the 63rd Annual Meeting of the Association for
+Computational Linguistics}, pp. 2607--2622, 2025.
+
+\bibitem{nguyen2025marag}
+T. Nguyen, P. Chin, and Y.-W. Tai,
+``MA-RAG: Multi-Agent Retrieval-Augmented Generation via Collaborative
+Chain-of-Thought Reasoning,''
+\textit{arXiv preprint arXiv:2505.20096}, 2025.
+
+\bibitem{ma2023rafe}
+S. Mao et al.,
+``RaFe: Ranking Feedback Improves Query Rewriting for RAG,''
+\textit{arXiv preprint https://arxiv.org/abs/2405.14431}, 2024.
+
+\bibitem{he2025}
+J. He et al.,
+``LLM-Based Multi-Agent Systems for Software Engineering: Literature Review, Vision, and the Road Ahead,''
+\textit{ACM Transactions on Software Engineering and Methodology},
+vol. 34, no. 5, 2025.
+
+\bibitem{joshi2025review}
+S. Joshi,
+``Review of Autonomous and Collaborative Agentic AI and Multi-Agent Systems for Enterprise Applications,''
+\textit{International Journal of Innovative Research in Engineering \& Management},
+vol. 12, no. 3, pp. 65--76, 2025. doi:10.55524/ijirem.2025.12.3.9.
+
+\bibitem{ranaldi2025}
+L. Ranaldi et al., ``Multilingual Retrieval-Augmented Generation for Knowledge-Intensive Task
+,'' \textit{arXiv preprint https://arxiv.org/abs/2504.03616}, 2025.
+
+\bibitem{ghosh2025event}
+S. Ghosh et al.,
+``Event-Driven Approach for Monitoring and Orchestration of Cloud-Native Applications,''
+\textit{2025 IEEE International Conference on Cloud Computing (CLOUD)},
+pp. 112--119, 2025.
+
+\bibitem{adimulam2026}
+A. Adimulam et al., ``The Orchestration of Multi-Agent Systems: Architectures, Protocols, and Enterprise Adoption,'' \textit{arXiv preprint https://arxiv.org/html/2601.13671v1}, 2026.
+
+\bibitem{roman2026}
+A. Roman et al., ``Orchestral AI: A Framework for Agent Orchestration,'' \textit{arXiv preprint https://arxiv.org/abs/2601.02577}, 2026.
+
+\bibitem{asai2024selfrag}
+A. Asai, Z. Wu, Y. Wang, A. Sil, and H. Hajishirzi,
+``Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection,''
+\textit{The Twelfth International Conference on Learning Representations}, 2024.
+
+\bibitem{jeong2024adaptiverag}
+M. Jeong et al.,
+``Adaptive-RAG: Learning to Adapt Retrieval-Augmented Generation Based on Query Complexity,''
+\textit{arXiv preprint https://arxiv.org/abs/2403.14403}, 2024.
+
+\bibitem{gao2023survey}
+Y. Gao et al.,
+``Retrieval-Augmented Generation for Large Language Models: A Survey,''
+\textit{arXiv preprint https://arxiv.org/abs/2312.10997}, 2023.
+
+\bibitem{wu2023autogen}
+Q. Wu et al.,
+``AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation,''
+\textit{arXiv preprint https://arxiv.org/abs/2308.08155}, 2023.
+
+\bibitem{huggingface2024agents}
+HuggingFace,
+``Agents Course, Unit 1: What are Agents?''
+\url{https://huggingface.co/learn/agents-course}, 2024.
+
+\bibitem{yan2024crag}
+S. Yan et al.,
+``Corrective Retrieval Augmented Generation,''
+\textit{arXiv preprint https://arxiv.org/abs/2401.15884}, 2024.
+
+\bibitem{jiang2023flare}
+Z. Jiang et al.,
+``Active Retrieval Augmented Generation,''
+\textit{arXiv preprint https://arxiv.org/abs/2305.06983}, 2023.
+
+\bibitem{shinn2023reflexion}
+N. Shinn et al.,
+``Reflexion: Language Agents with Verbal Reinforcement Learning,''
+\textit{arXiv preprint https://arxiv.org/abs/2303.11366}, 2023.
+
+\bibitem{bai2022constitutional}
+Y. Bai et al.,
+``Constitutional AI: Harmlessness from AI Feedback,''
+\textit{arXiv preprint https://arxiv.org/abs/2212.08073}, 2022.
+
+\bibitem{guan2025}
+X. Guan et al.,
+``DeepRAG: Thinking to Retrieve Step by Step for Large Language Models,''
+\textit{arXiv preprint https://arxiv.org/abs/2508.01005}, 2025.
+
+\bibitem{yang2026}
+Z. Yang et al., ``Superintelligent Retrieval Agent: The Next Frontier of Information Retrieval ,'' \textit{arXiv preprint https://arxiv.org/abs/2605.06647}, 2026.
+
+\bibitem{zheng2026}
+Y. Zheng et al., ``SkillRouter: Skill Routing for LLM Agents at Scale
+,'' \textit{arXiv preprint https://arxiv.org/html/2603.22455v4}, 2026.
+
+\bibitem{zhuge2024}
+M. Zhuge et al., ``Agent-as-a-Judge: Evaluate Agents with Agents,'' \textit{arXiv preprint https://arxiv.org/abs/2410.10934}, 2024.
+
+\bibitem{cohen1960coefficient}
+J. Cohen,
+``A Coefficient of Agreement for Nominal Scales,''
+\textit{Educational and Psychological Measurement},
+vol. 20, no. 1, pp. 37--46, 1960.
+
+\bibitem{yang2024}
+X. Yang et al., ``CRAG -- Comprehensive RAG Benchmark
+,'' \textit{arXiv preprint https://arxiv.org/abs/2406.04744}, 2024.
+
+\bibitem{reuter2025}
+M. Reuter, T. Lingenberg, and others,
+``Towards Reliable Retrieval in RAG Systems for Large Legal Datasets,''
+\textit{arXiv preprint arXiv:2510.06999}, 2025.
+
+\bibitem{furnas1987vocabulary}
+G. W. Furnas, T. K. Landauer, L. M. Gomez, and S. T. Dumais,
+``The Vocabulary Problem in Human-System Communication,''
+\textit{Communications of the ACM},
+vol. 30, no. 11, pp. 964--971, 1987.
+
+\bibitem{rocchio1971relevance}
+J. J. Rocchio,
+``Relevance Feedback in Information Retrieval,''
+in \textit{The SMART Retrieval System: Experiments in Automatic Document
+Processing}, G. Salton, Ed. Englewood Cliffs, NJ: Prentice-Hall, 1971,
+pp. 313--323.
+
+\bibitem{xu1996localglobal}
+J. Xu and W. B. Croft,
+``Query Expansion Using Local and Global Document Analysis,''
+\textit{Proceedings of the 19th Annual International ACM SIGIR Conference on
+Research and Development in Information Retrieval},
+pp. 4--11, 1996.
+
+\bibitem{carpineto2012survey}
+C. Carpineto and G. Romano,
+``A Survey of Automatic Query Expansion in Information Retrieval,''
+\textit{ACM Computing Surveys},
+vol. 44, no. 1, pp. 1--50, 2012.
+
+\bibitem{mitra1998expansion}
+M. Mitra, A. Singhal, and C. Buckley,
+``Improving Automatic Query Expansion,''
+\textit{Proceedings of the 21st Annual International ACM SIGIR Conference on
+Research and Development in Information Retrieval},
+pp. 206--214, 1998.
+
+\bibitem{amati2004drift}
+G. Amati, C. Carpineto, and G. Romano,
+``Query Difficulty, Robustness, and Selective Application of Query Expansion,''
+\textit{Advances in Information Retrieval (ECIR 2004)},
+Lecture Notes in Computer Science, pp. 127--137, 2004.
+
+\bibitem{collinsthompson2009risk}
+K. Collins-Thompson,
+``Reducing the Risk of Query Expansion via Robust Constrained Optimization,''
+\textit{Proceedings of the 18th ACM Conference on Information and Knowledge
+Management (CIKM)},
+pp. 837--846, 2009.
+
+\bibitem{gao2023hyde}
+L. Gao, X. Ma, J. Lin, and J. Callan,
+``Precise Zero-Shot Dense Retrieval without Relevance Labels,''
+\textit{Proceedings of the 61st Annual Meeting of the Association for
+Computational Linguistics},
+pp. 1762--1777, 2023.
+
+\bibitem{wang2023query2doc}
+L. Wang, N. Yang, and F. Wei,
+``Query2doc: Query Expansion with Large Language Models,''
+\textit{Proceedings of the 2023 Conference on Empirical Methods in Natural
+Language Processing},
+pp. 9414--9423, 2023.
+
+\bibitem{jagerman2023expansion}
+R. Jagerman, H. Zhuang, Z. Qin, X. Wang, and M. Bendersky,
+``Query Expansion by Prompting Large Language Models,''
+\textit{arXiv preprint https://arxiv.org/abs/2305.03653}, 2023.
+
+\bibitem{ma2023rewrite}
+X. Ma, Y. Gong, P. He, H. Zhao, and N. Duan,
+``Query Rewriting in Retrieval-Augmented Large Language Models,''
+\textit{Proceedings of the 2023 Conference on Empirical Methods in Natural
+Language Processing},
+pp. 5303--5315, 2023.
+
+\bibitem{weller2024expansions}
+O. Weller, K. Lo, D. Wadden, D. Lawrie, B. Van Durme, A. Cohan, and L. Soldaini,
+``When do Generative Query and Document Expansions Fail? A Comprehensive Study
+Across Methods, Retrievers, and Datasets,''
+\textit{Findings of the Association for Computational Linguistics: EACL 2024},
+pp. 1987--2003, 2024.
+
+\bibitem{robertson2009bm25}
+S. Robertson and H. Zaragoza,
+``The Probabilistic Relevance Framework: BM25 and Beyond,''
+\textit{Foundations and Trends in Information Retrieval},
+vol. 3, no. 4, pp. 333--389, 2009.
+
+\bibitem{nogueira2019monobert}
+R. Nogueira and K. Cho,
+``Passage Re-ranking with BERT,''
+\textit{arXiv preprint https://arxiv.org/abs/1901.04085}, 2019.
+
+\bibitem{nogueira2020monot5}
+R. Nogueira, Z. Jiang, R. Pradeep, and J. Lin,
+``Document Ranking with a Pretrained Sequence-to-Sequence Model,''
+\textit{Findings of the Association for Computational Linguistics: EMNLP 2020},
+pp. 708--718, 2020.
+
+\bibitem{khattab2020colbert}
+O. Khattab and M. Zaharia,
+``ColBERT: Efficient and Effective Passage Search via Contextualized Late
+Interaction over BERT,''
+\textit{Proceedings of the 43rd International ACM SIGIR Conference on Research
+and Development in Information Retrieval},
+pp. 39--48, 2020.
+
+\bibitem{sun2023rankgpt}
+W. Sun, L. Yan, X. Ma, S. Wang, P. Ren, Z. Chen, D. Yin, and Z. Ren,
+``Is ChatGPT Good at Search? Investigating Large Language Models as Re-Ranking
+Agents,''
+\textit{Proceedings of the 2023 Conference on Empirical Methods in Natural
+Language Processing},
+pp. 14918--14937, 2023.
+
+\bibitem{lin2021pretrained}
+J. Lin, R. Nogueira, and A. Yates,
+``Pretrained Transformers for Text Ranking: BERT and Beyond,''
+\textit{Synthesis Lectures on Human Language Technologies},
+vol. 14, pp. 1--325, 2021.
+
+\bibitem{cormack2009rrf}
+G. V. Cormack, C. L. A. Clarke, and S. Buettcher,
+``Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning
+Methods,''
+\textit{Proceedings of the 32nd International ACM SIGIR Conference on Research
+and Development in Information Retrieval},
+pp. 758--759, 2009.
+
+\bibitem{jin2025flashrag}
+J. Jin, Y. Zhu, Z. Dou, G. Dong, X. Yang, C. Zhang, T. Zhao, Z. Yang, and
+J.-R. Wen,
+``FlashRAG: A Modular Toolkit for Efficient Retrieval-Augmented Generation
+Research,''
+\textit{Companion Proceedings of the ACM Web Conference 2025 (WWW '25),
+Resource Track},
+pp. 737--740, 2025.
+
+\bibitem{flashrag2025repo}
+RUC-NLPIR,
+``FlashRAG: Reference Implementation (MIT License),''
+\url{https://github.com/RUC-NLPIR/FlashRAG}, accessed August 2026.
+
+\bibitem{zhang2024raglab}
+X. Zhang, Y. Song, Y. Wang, S. Tang, X. Li, Z. Zeng, Z. Wu, W. Ye, W. Xu,
+Y. Zhang, X. Dai, S. Zhang, and Q. Wen,
+``RAGLAB: A Modular and Research-Oriented Unified Framework for
+Retrieval-Augmented Generation,''
+\textit{Proceedings of the 2024 Conference on Empirical Methods in Natural
+Language Processing: System Demonstrations},
+pp. 408--418, 2024.
+
+\bibitem{raglab2024repo}
+X. Zhang et al.,
+``RAGLAB: Reference Implementation,''
+\url{https://github.com/fate-ubw/RAGLAB}, accessed August 2026.
+
+\bibitem{selfrag2023repo}
+A. Asai et al.,
+``Self-RAG: Reference Implementation,''
+\url{https://github.com/AkariAsai/self-rag}, accessed August 2026.
+
+\bibitem{izacard2022contriever}
+G. Izacard, M. Caron, L. Hosseini, S. Riedel, P. Bojanowski, A. Joulin, and
+E. Grave,
+``Unsupervised Dense Information Retrieval with Contrastive Learning,''
+\textit{Transactions on Machine Learning Research}, 2022.
+
+\bibitem{karpukhin2020dpr}
+V. Karpukhin, B. O\u{g}uz, S. Min, P. Lewis, L. Wu, S. Edunov, D. Chen, and
+W. Yih,
+``Dense Passage Retrieval for Open-Domain Question Answering,''
+\textit{Proceedings of the 2020 Conference on Empirical Methods in Natural
+Language Processing},
+pp. 6769--6781, 2020.
+
+\bibitem{thakur2021beir}
+N. Thakur, N. Reimers, A. R\"uckl\'e, A. Srivastava, and I. Gurevych,
+``BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information
+Retrieval Models,''
+\textit{Proceedings of the 35th Conference on Neural Information Processing
+Systems, Datasets and Benchmarks Track}, 2021.
+
+\bibitem{petroni2021kilt}
+F. Petroni, A. Piktus, A. Fan, P. Lewis, M. Yazdani, N. De Cao, J. Thorne,
+Y. Jernite, V. Karpukhin, J. Maillard, V. Plachouras, T. Rockt\"aschel, and
+S. Riedel,
+``KILT: A Benchmark for Knowledge Intensive Language Tasks,''
+\textit{Proceedings of the 2021 Conference of the North American Chapter of the
+Association for Computational Linguistics},
+pp. 2523--2544, 2021.
+
+\bibitem{es2024ragas}
+S. Es, J. James, L. Espinosa-Anke, and S. Schockaert,
+``RAGAs: Automated Evaluation of Retrieval Augmented Generation,''
+\textit{Proceedings of the 18th Conference of the European Chapter of the
+Association for Computational Linguistics: System Demonstrations},
+pp. 150--158, 2024.
+
+\bibitem{saadfalcon2024ares}
+J. Saad-Falcon, O. Khattab, C. Potts, and M. Zaharia,
+``ARES: An Automated Evaluation Framework for Retrieval-Augmented Generation
+Systems,''
+\textit{Proceedings of the 2024 Conference of the North American Chapter of the
+Association for Computational Linguistics},
+pp. 338--354, 2024.
+
+\bibitem{vu2024freshllms}
+T. Vu, M. Iyyer, X. Wang, N. Constant, J. Wei, J. Wei, C. Tar, Y.-H. Sung,
+D. Zhou, Q. V. Le, and T. Luong,
+``FreshLLMs: Refreshing Large Language Models with Search Engine Augmentation,''
+\textit{Findings of the Association for Computational Linguistics: ACL 2024},
+pp. 13697--13720, 2024.
+
+\bibitem{zobel1998reliable}
+J. Zobel,
+``How Reliable are the Results of Large-Scale Information Retrieval
+Experiments?''
+\textit{Proceedings of the 21st Annual International ACM SIGIR Conference on
+Research and Development in Information Retrieval},
+pp. 307--314, 1998.
+
+\bibitem{buckley2004incomplete}
+C. Buckley and E. M. Voorhees,
+``Retrieval Evaluation with Incomplete Information,''
+\textit{Proceedings of the 27th Annual International ACM SIGIR Conference on
+Research and Development in Information Retrieval},
+pp. 25--32, 2004.
+
+\bibitem{armstrong2009improvements}
+T. G. Armstrong, A. Moffat, W. Webber, and J. Zobel,
+``Improvements that Don't Add Up: Ad-Hoc Retrieval Results since 1998,''
+\textit{Proceedings of the 18th ACM Conference on Information and Knowledge
+Management (CIKM)},
+pp. 601--610, 2009.
+
+\bibitem{zheng2023judge}
+L. Zheng, W.-L. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li,
+D. Li, E. P. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica,
+``Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena,''
+\textit{Advances in Neural Information Processing Systems},
+vol. 36, pp. 46595--46623, 2023.
+
+\bibitem{panickssery2024self}
+A. Panickssery, S. R. Bowman, and S. Feng,
+``LLM Evaluators Recognize and Favor Their Own Generations,''
+\textit{Advances in Neural Information Processing Systems},
+vol. 37, pp. 68772--68802, 2024.
+
+\bibitem{rajpurkar2018squad2}
+P. Rajpurkar, R. Jia, and P. Liang,
+``Know What You Don't Know: Unanswerable Questions for SQuAD,''
+\textit{Proceedings of the 56th Annual Meeting of the Association for
+Computational Linguistics (Volume 2: Short Papers)},
+pp. 784--789, 2018.
+
+\bibitem{menzies2017negative}
+T. Menzies, Y. Yang, G. Mathew, B. Boehm, and J. Hihn,
+``Negative Results for Software Effort Estimation,''
+\textit{Empirical Software Engineering},
+vol. 22, no. 5, pp. 2658--2683, 2017.
+
+\bibitem{hellendoorn2017dnn}
+V. J. Hellendoorn and P. Devanbu,
+``Are Deep Neural Networks the Best Choice for Modeling Source Code?''
+\textit{Proceedings of the 2017 11th Joint Meeting on Foundations of Software
+Engineering (ESEC/FSE)},
+pp. 763--773, 2017.
+
+\bibitem{dacrema2019progress}
+M. Ferrari Dacrema, P. Cremonesi, and D. Jannach,
+``Are We Really Making Much Progress? A Worrying Analysis of Recent Neural
+Recommendation Approaches,''
+\textit{Proceedings of the 13th ACM Conference on Recommender Systems
+(RecSys)},
+pp. 101--109, 2019.
+
+\bibitem{lipton2019trends}
+Z. C. Lipton and J. Steinhardt,
+``Troubling Trends in Machine Learning Scholarship,''
+\textit{ACM Queue},
+vol. 17, no. 1, pp. 45--77, 2019.
+
+\bibitem{liu2021reproducibility}
+C. Liu, C. Gao, X. Xia, D. Lo, J. Grundy, and X. Yang,
+``On the Reproducibility and Replicability of Deep Learning in Software
+Engineering,''
+\textit{ACM Transactions on Software Engineering and Methodology},
+vol. 31, no. 1, pp. 1--46, 2021.
+
+
+%% ---------------------------------------------------------------------------
+
+\end{thebibliography}
+
+\end{document}
