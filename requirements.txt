@@ -9,5 +9,11 @@ requests==2.34.2
 numpy==2.4.6
 pytest==9.1.1
 
-# Demo UI only (app.py, DemoMain*.py, marag_app.py). Unverified locally.
+# Demo UI only (app_1.py, DemoMain*.py, marag_app.py -- NOT app.py, which is
+# an unrelated Flask IoT sensor API). app_1.py is the Streamlit deploy target;
+# smoke-tested locally under Python 3.11 + streamlit==1.32.0, loads clean.
+# Its one Ollama call (query rewrite) already degrades to rule-based rewriting
+# on connection failure, so a host with no reachable Ollama (e.g. Streamlit
+# Community Cloud) runs without a crash or a visible error -- just a weaker
+# rewrite.
 streamlit>=1.32.0

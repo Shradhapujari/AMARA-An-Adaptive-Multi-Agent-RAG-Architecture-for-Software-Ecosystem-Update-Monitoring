@@ -208,7 +208,7 @@ headline run with a DOI before submission.
   what "admissible" and "MDE" mean precisely, then §3 above for exactly where
   things stand right now.
 
-## 6. Paper audit, 2026-08-31 ~02:15 (infra/eval session)
+## 8. Paper audit, 2026-08-31 ~02:15 (infra/eval session)
 
 Checked `paper/tosem_amara.tex` numeric claims against `scripts/check_runs.py`
 output. No fabricated or stale numbers found — Table `scaled-ablation` (n=100,
@@ -221,3 +221,40 @@ caption).
 the artifact appendix (`reproducibility.md`) will need to point reviewers at
 the right `results/` folder. Suggest adding `run_id` to each caption before
 submission — cheap, and closes a real gap between the paper and its evidence.
+
+## 9. Top_k sweep result (05:43) — the throttle question, answered, and it's not a clean answer
+
+`scripts/topk_report.py` against the three completed runs (`top_k` 4/10/20,
+same frozen `corpus_snapshot_b100_p5`, `MARAG_RERANK=embed` fixed). Pool
+recall (ceiling) is stable across all three, as it should be for a fixed
+corpus: `marag` 0.982, `single_agent` 0.846.
+
+**It reverses, not just closes.** At `top_k=10`, `marag` is BEHIND on
+recall@10 by −0.088 (CI [−0.139, −0.039], p=0.0007 — clears zero). At
+`top_k=20`, `marag` is AHEAD on recall@20 by +0.075 (CI [+0.036, +0.118],
+p=0.0006 — also clears zero). Both are real signals, not noise, and they
+point opposite directions.
+
+Mechanism, from the conversion numbers: `single_agent` converts its smaller
+pool efficiently at small `k` (0.806 shipped/held at k=10 vs `marag`'s
+0.619) — it's better at packing its top hits into few slots. `marag`'s much
+larger raw pool (0.982 vs 0.846 pool recall) only starts to dominate once
+given enough room; by k=20 conversion is nearly even (0.927 vs 0.987) and
+the raw-pool advantage wins out.
+
+Matched-ceiling (equal fetch, isolates ranking) confirms this isn't a fetch
+artifact: at k=10, `marag` is significantly worse even with equal pool
+(diff −0.400, p=0.0005); by k=20 the matched-ceiling gap is smaller and not
+significant (diff −0.089, p=0.10).
+
+**Reading:** `top_k=4` (the paper's config) wasn't hiding a clean advantage —
+it was hiding a genuine ranking deficit at small windows that a large-enough
+window eventually outruns via raw fetch volume. Neither "the reranker is
+worse" nor "the architecture works, config was throttling it" is the whole
+story; both are true at different `k`. This is a nuance, not a simple
+vindication either way — worth stating precisely rather than picking the
+convenient half.
+
+Runs: `run_1788175676` (k=4), `run_1788176239` (k=10), `run_1788178165`
+(k=20), all on `corpus_snapshot_b100_p5`, n=93 scorable (pool recorded).
+
