@@ -896,15 +896,28 @@ def extract_vendor(query: str, _subreddit_hint: str = "") -> list:
                 found.append(canonical)
 
     # 2. Check exact word match against vendor names list
+    # Iterate sorted(), not the set directly: when a query contains two words
+    # that are both registered vendor names ("rust-lang rust v1.92.0" matches
+    # both "rust" and, spuriously, "release" from "release channel"), both tie
+    # at vendor_score 0 below and the tie is broken by insertion order here.
+    # Set iteration order is randomized per PYTHONHASHSEED, so which vendor won
+    # changed between process invocations of the identical query -- verified:
+    # extract_vendor("...rust-lang rust v1.92.0...") returned "rust" under most
+    # seeds and "release" under others. That silently changed which endpoints
+    # got queried, which is how two arms of a frozen-corpus replay (each its
+    # own process) ended up with different candidate pools on 16 of 200 rows
+    # despite the corpus itself replaying with zero misses on both. Sorting
+    # fixes the ORDER, not which vendors are considered, so match semantics are
+    # unchanged; only which tied candidate wins is now deterministic.
     if not found:
-        words = set(q_lower.replace("?","").replace("!","").split())
+        words = sorted(set(q_lower.replace("?","").replace("!","").split()))
         for word in words:
             if len(word) > 3 and word in _VENDOR_NAMES:
                 found.append(word)
 
     # 3. Check subreddit names (they're curated and clean)
     if not found:
-        words = set(q_lower.replace("?","").replace("!","").split())
+        words = sorted(set(q_lower.replace("?","").replace("!","").split()))
         for word in words:
             if len(word) > 3 and word in _SUBREDDIT_NAMES:
                 found.append(word)
