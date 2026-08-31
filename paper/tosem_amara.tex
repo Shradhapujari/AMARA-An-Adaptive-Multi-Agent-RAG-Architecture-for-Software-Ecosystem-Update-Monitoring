@@ -433,6 +433,23 @@ index to make it. It is a reimplementation and not a reproduction: neither
 published checkpoint is involved, so it can never settle how those systems
 perform, only how their mechanisms behave over these sources.
 
+Completing that evaluation carries a condition worth stating in advance, because
+it is easy to violate by default. The arm's relevance critique discards a
+document when it judges it irrelevant, and in the configuration released here
+that critique runs the same model that supplies our relevance judgments. Scoring
+the arm with that judge would be the circular arrangement of
+Section~\ref{sec:related}: an assessor filtering the candidates it will then
+grade, which Clarke and Dietz measured collapsing agreement with human judgments
+from $\tau \approx 0.84$ to 0.38 at rank~10~\cite{clarke2024cannot}. The arm
+would score well by construction rather than by retrieving better. Whoever
+finishes the run should therefore judge it with a model independent of its
+critic. The harness records each critique decision, so the number of documents
+the critic removed is recoverable per query and the inflation can be bounded
+rather than assumed; because a hedged or negated critique keeps the document
+(\texttt{SelfReflectiveRAG.is\_relevant} discards only on a non-negated
+\textsc{irrelevant} verdict, via \texttt{find\_verdict}), that count is a lower
+bound on the critic's filtering.
+
 \subsection{Corrective Retrieval and Adaptive Feedback}
 
 Corrective retrieval methods modify retrieval behavior when retrieved
