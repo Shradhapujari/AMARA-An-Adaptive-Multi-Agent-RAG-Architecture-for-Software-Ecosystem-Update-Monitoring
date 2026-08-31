@@ -1072,28 +1072,51 @@ rerankers scored against the user's original question.
 Table~\ref{tab:ranking-ablation} reports the outcome.
 
 \begin{table}[t]
-\caption{Ranking ablation on the multi-agent arm ($n=10$). Successively stronger
-rerankers raise MRR monotonically while nDCG@3 remains flat --- the signature of
-a candidate set that does not contain the answer.}
+\caption{Ranking and retrieval ablation on the multi-agent arm ($n \le 10$).
+Panel~(a): with only the rewritten phrasing retrieved, successively stronger
+ranking functions raise MRR monotonically while nDCG@3 stays flat --- the
+signature of a candidate set that does not contain the answer. Panel~(b): with
+both phrasings retrieved and the pools merged, every configuration improves
+sharply, and the choice of which phrasing to \emph{rank} against is worth far
+less (0.597 versus 0.621) than the choice of which to \emph{retrieve} with.
+Rows come from separate runs against live sources and are therefore not strictly
+paired; the panel~(a)/(b) contrast is large enough to survive that, the
+within-panel~(b) contrast is not.}
 \label{tab:ranking-ablation}
 \begin{tabular}{llrrr}
 \toprule
-Configuration & Ranking signal & nDCG@3 & MRR & Recall@5 \\
+Ranking function & Scored against & nDCG@3 & MRR & Recall@5 \\
 \midrule
-Published & first-4-token substring boost & 0.145 & 0.250 & 0.145 \\
-BM25       & Okapi BM25 over the pool      & 0.212 & 0.500 & 0.203 \\
-Embedding  & cosine over local embeddings  & 0.188 & 0.625 & 0.327 \\
+\multicolumn{5}{l}{\emph{(a) Single-phrasing retrieval: the rewritten query only}} \\
+Substring boost & original question & 0.145 & 0.250 & 0.145 \\
+Okapi BM25      & original question & 0.212 & 0.500 & 0.203 \\
+Embedding cosine & original question & 0.188 & 0.625 & 0.327 \\
 \midrule
-Embedding + union fetch & \emph{as above, wider pool} & \textbf{0.973} & \textbf{1.000} & \textbf{0.933} \\
+\multicolumn{5}{l}{\emph{(b) Union retrieval: both phrasings issued, pools merged}} \\
+Substring boost & rewritten query  & 0.597 & 0.650 & 0.650 \\
+Substring boost & original question & 0.621 & 0.667 & 0.611 \\
+Embedding cosine & original question & \textbf{0.973} & \textbf{1.000} & \textbf{0.933} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-MRR rises monotonically from 0.250 to 0.625, confirming that ranking was
-genuinely defective: better ranking does place better documents first among
-those available. But nDCG@3 stays near 0.19 throughout. A ranking intervention
-that improves ranking without closing the gap is evidence that the gap is not a
-ranking problem.
+Within panel~(a), MRR rises monotonically from 0.250 to 0.625, confirming that
+ranking was genuinely defective: better ranking does place better documents
+first among those available. But nDCG@3 stays near 0.19 throughout. A ranking
+intervention that improves ranking without closing the gap is evidence that the
+gap is not a ranking problem.
+
+Panel~(b) makes the same point from the other direction, and also bounds our own
+claim. Once both phrasings are retrieved, even the original substring boost ---
+the weakest ranking function available, and the one the pipeline shipped with
+--- reaches nDCG@3 of 0.597, four times its panel~(a) value. Ranking the merged
+pool against the original question rather than the rewrite adds 0.024 on top of
+that (0.621 versus 0.597), a difference we do not regard as established at this
+sample size. In other words: of the two changes we made, the one we made first
+and reasoned about most carefully --- ranking against the user's question ---
+turns out to matter far less than simply retrieving with both phrasings. We
+report this because it is the opposite of the order in which we found it, and
+because a reader deciding what to adopt should adopt the union first.
 
 We therefore stopped inferring from scores and counted documents directly. For
 each question we took the documents the single-agent baseline retrieved that the
@@ -1211,7 +1234,10 @@ calls the union incurs.
   \item The multi-agent pipeline's deficit under IR metrics was caused by
   retrieval, not ranking: 22 of 23 relevant documents were never retrieved,
   and three reranker generations could not recover them
-  (Table~\ref{tab:ranking-ablation}).
+  (Table~\ref{tab:ranking-ablation}, panel~(a)). Once both phrasings are
+  retrieved, even the original weak ranking function recovers most of the
+  deficit, and which phrasing is ranked against adds little
+  (panel~(b)).
   \item Issuing both the original and rewritten phrasings and unioning the
   candidate pools removes the deficit, and the remedy holds on a
   100-question multi-ecosystem benchmark, where the fetch-time loss falls from
