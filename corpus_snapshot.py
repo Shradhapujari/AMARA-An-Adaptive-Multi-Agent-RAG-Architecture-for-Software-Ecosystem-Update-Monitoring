@@ -69,6 +69,14 @@ from typing import Dict, Optional
 
 ENV_VAR = "MARAG_CORPUS"
 
+
+class RecordedFailure(Exception):
+    """Raised on replay where the recording pass saw the request fail.
+
+    Every fetch in the pipeline is already wrapped in try/except, so this
+    surfaces to the caller exactly as the original network error did.
+    """
+
 # Hosts that serve *documents*. A replay miss on one of these means the corpus
 # was not actually frozen for that call; a miss anywhere else (the local model
 # server) is expected and harmless.
@@ -218,6 +226,30 @@ class Snapshot:
     def _body(rec: dict) -> bytes:
         return base64.b64decode(rec.get("body_b64") or "")
 
+    def _store_failure(self, key: str, url: str, exc: BaseException) -> None:
+        """Record that a request *failed*, so replay reproduces the same failure.
+
+        Recording only successes leaves a permanently unrecorded request: the
+        call raises, nothing is stored, and the next replay misses again and
+        goes live again. Measured on the 100-question run, 4 such requests
+        leaked on every arm, and because one failed source call drops a whole
+        tier the candidate pool differed on 16 of 200 (system, question) pairs
+        -- pool sizes of 20 against 9 for the same question.
+
+        A frozen corpus must freeze what the experiment actually observed, and
+        what it observed here was a failure. Replaying the failure keeps every
+        arm on identical inputs, which is the property the control exists for.
+        """
+        rec = {"key": key, "url": url, "error": f"{type(exc).__name__}: {exc}"[:500]}
+        with gzip.open(_key_path(self.dir, key), "wt", encoding="utf-8") as f:
+            json.dump(rec, f)
+        self.recorded += 1
+
+    @staticmethod
+    def _replay_failure(rec: dict):
+        """Re-raise a recorded failure. Callers already guard every fetch."""
+        raise RecordedFailure(rec.get("error", "recorded failure"))
+
     def _note_miss(self, url: str) -> None:
         self.misses += 1
         host = (urllib.parse.urlparse(url).hostname or "?").lower()
@@ -232,10 +264,16 @@ class Snapshot:
             rec = self._load(key)
             if rec is not None:
                 self.hits += 1
+                if "error" in rec:
+                    self._replay_failure(rec)
                 return ReplayedResponse(rec["status"], self._body(rec),
                                         rec.get("headers"), url)
             self._note_miss(url)
-        resp = self._real_requests_get(url, **kw)
+        try:
+            resp = self._real_requests_get(url, **kw)
+        except Exception as e:  # noqa: BLE001 — a failure is an observation too
+            self._store_failure(key, url, e)
+            raise
         try:
             self._store(key, getattr(resp, "status_code", 0), resp.content or b"",
                         dict(getattr(resp, "headers", {}) or {}), url)
@@ -258,14 +296,20 @@ class Snapshot:
             rec = self._load(key)
             if rec is not None:
                 self.hits += 1
+                if "error" in rec:
+                    self._replay_failure(rec)
                 return ReplayedUrlResponse(rec["status"], self._body(rec),
                                            rec.get("headers"))
             self._note_miss(url)
 
-        resp = self._real_urlopen(req, *a, **kw)
-        # The caller gets one shot at the stream, so read it here and hand back
-        # a replay object over the same bytes rather than a half-consumed one.
-        content = resp.read()
+        try:
+            resp = self._real_urlopen(req, *a, **kw)
+            # The caller gets one shot at the stream, so read it here and hand
+            # back a replay object over the same bytes, not a half-consumed one.
+            content = resp.read()
+        except Exception as e:  # noqa: BLE001 — a failure is an observation too
+            self._store_failure(key, url, e)
+            raise
         status = getattr(resp, "status", None) or resp.getcode() or 0
         try:
             self._store(key, status, content, dict(getattr(resp, "headers", {}) or {}),

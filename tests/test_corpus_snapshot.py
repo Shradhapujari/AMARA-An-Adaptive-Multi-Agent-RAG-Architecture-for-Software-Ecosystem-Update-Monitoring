@@ -263,3 +263,83 @@ def test_an_unknown_mode_fails_loudly(tmp_path):
         assert "record|replay" in str(e)
     else:
         raise AssertionError("expected ValueError for an unknown mode")
+
+
+# ── failed requests are observations too ─────────────────────────────────
+
+def test_a_failed_request_is_recorded_and_replayed_as_the_same_failure(tmp_path, monkeypatch):
+    """The leak that contaminated the 100-question run.
+
+    Recording only successes left the request permanently unrecorded: it raised,
+    nothing was stored, and every later replay missed and went live again. One
+    failed source call drops a whole tier, so candidate pools diverged across
+    arms on 16 of 200 pairs.
+    """
+    import requests
+
+    calls = {"n": 0}
+
+    def boom(url, **kw):
+        calls["n"] += 1
+        raise ConnectionError("connection reset by peer")
+
+    monkeypatch.setattr(requests, "get", boom)
+    snap = _snap(tmp_path, "record")
+    with snap:
+        try:
+            requests.get("https://releasetrain.io/api/v/")
+        except ConnectionError:
+            pass
+    assert calls["n"] == 1
+    assert snap.stats()["recorded"] == 1, "the failure was not recorded"
+
+    # Replay must reproduce the failure without touching the network, so every
+    # arm sees the identical (failed) input.
+    snap2 = _snap(tmp_path, "replay")
+    with snap2:
+        try:
+            requests.get("https://releasetrain.io/api/v/")
+            raise AssertionError("replay did not reproduce the recorded failure")
+        except corpus_snapshot.RecordedFailure as e:
+            assert "ConnectionError" in str(e)
+    assert calls["n"] == 1, "replay went to the network"
+    st = snap2.stats()
+    assert st["hits"] == 1 and st["misses"] == 0
+    assert st["frozen"] is True, "a reproduced failure still counts as frozen"
+
+
+def test_a_failed_urlopen_is_recorded_and_replayed(tmp_path, monkeypatch):
+    def boom(req, *a, **kw):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with _snap(tmp_path, "record"):
+        try:
+            urllib.request.urlopen(
+                urllib.request.Request("https://releasetrain.io/api/v/"))
+        except TimeoutError:
+            pass
+
+    snap = _snap(tmp_path, "replay")
+    with snap:
+        try:
+            urllib.request.urlopen(
+                urllib.request.Request("https://releasetrain.io/api/v/"))
+            raise AssertionError("replay did not reproduce the recorded failure")
+        except corpus_snapshot.RecordedFailure:
+            pass
+    assert snap.stats()["corpus_misses"] == 0
+
+
+def test_the_original_exception_still_reaches_the_caller_while_recording(tmp_path, monkeypatch):
+    """Recording must not swallow a live error — callers guard on the real type."""
+    import requests
+
+    monkeypatch.setattr(requests, "get",
+                        lambda url, **kw: (_ for _ in ()).throw(ValueError("bad")))
+    with _snap(tmp_path, "record"):
+        try:
+            requests.get("https://releasetrain.io/api/v/")
+            raise AssertionError("exception was swallowed")
+        except ValueError:
+            pass
