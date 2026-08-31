@@ -4,6 +4,7 @@ Read in this order. Each file answers one question and hands off to the next.
 
 | File | Question it answers |
 |---|---|
+| [`status.md`](status.md) | **Start here** — what is done, what is running, what not to break |
 | [`mission.md`](mission.md) | Why this project exists, what we claim, what would falsify each claim, and where the work honestly stands |
 | [`tech-stack.md`](tech-stack.md) | With what — locked versions, models, endpoints, environment variables, repository map |
 | [`pipeline.md`](pipeline.md) | How it is wired — execution graph, the two fixed defects, data contracts, failure policy, cost |
