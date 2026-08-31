@@ -164,13 +164,15 @@ Self-Improving Agents, RLAIF}
 
 Modern software ecosystems produce a diverse collection of documents, including release notes, security advisories, version control records, and online community discussions. These documents contain information about software updates, vulnerabilities, compatibility issues, and deployment considerations. Answering software update--related questions often requires integrating information from multiple sources.
 
+Each of these artefacts has been studied in its own right. Release notes are known to be produced inconsistently and to omit information their readers need, which has motivated work on summarising and generating them automatically~\cite{abebe2016releasenotes,moreno2017arena,bi2022releasenotes} and on the discipline of version identifiers themselves~\cite{guo2025verlog}. Developers routinely turn to community platforms and web search when documentation is insufficient~\cite{xia2017websearch,zhang2018apimisuse}, and the reliability of what they find there is an active question~\cite{kabir2024stackoverflow,stolee2025codesearch}. The task studied here sits across these sources rather than within any one of them.
+
 Software update information is frequently accessed through natural language questions. Developers, system administrators, and users commonly ask colleagues about software updates or seek information through online community platforms. Answering such questions often requires locating relevant documents, reviewing information from multiple sources, and evaluating the consistency of available documents. Systems that generate accurate source-grounded answers can reduce the effort required to retrieve, read, and synthesize information from software ecosystem documents.
 
 Retrieval-Augmented Generation (RAG) systems have emerged as a promising approach for answering such questions by combining document retrieval with large language models to generate answers grounded in external information~\cite{lewis2020rag}. Conventional single-agent RAG systems typically perform query understanding, retrieval, evaluation, and answer generation within a single reasoning process. This can result in vocabulary mismatch between user questions and retrieved documents~\cite{gao2024dmqr}, limited handling of domain-specific terminology, and the absence of feedback mechanisms for correcting retrieval errors \cite{cook2025rag}.
 
 Recent multi-agent RAG systems decompose retrieval and reasoning into multiple specialized agents~\cite{wang2024mainrag, nguyen2025marag}. Most existing evaluations focus on general question-answering benchmarks, whereas software update questions require combining information from heterogeneous software ecosystem documents. In addition, the role of feedback-based adaptation in multi-agent RAG systems for software update question answering has received limited empirical evaluation~\cite{ma2023rafe}.
 
-This paper presents an Adaptive Multi-Agent RAG Architecture for answering software update questions \cite{he2025,joshi2025review}. The architecture consists of specialized agents for query rewriting, retrieval, evaluation, and orchestration connected through a feedback loop \cite{ghosh2025event,adimulam2026,roman2026}.
+This paper presents an Adaptive Multi-Agent RAG Architecture for answering software update questions \cite{he2025,joshi2025review}. The architecture consists of specialized agents for query rewriting, retrieval, evaluation, and orchestration connected through a feedback loop \cite{adimulam2026,roman2026}.
 
 \subsection{A Result We Did Not Expect}
 
@@ -386,6 +388,38 @@ aggregate score the system was tuned against. The ranking ablation measures the
 invariant directly: MRR rises from 0.250 to 0.625 across three rerankers, because
 ranking within the fetched pool does improve, while nDCG@3 stays near 0.19,
 because the pool does not contain the documents the metric is asking for.
+
+\subsection{Language-Model Agents for Software Engineering}
+
+Applying language models to software engineering tasks is now a substantial
+literature in its own right~\cite{fan2023llmse,hou2024llm4se}, and agent-based
+systems are a recognised strand within it~\cite{liu2026agentsurvey}. Multi-agent
+designs assign roles to separate models and coordinate them: ChatDev organises
+agents along a waterfall process~\cite{qian2024chatdev}, MetaGPT encodes
+standardised operating procedures between roles~\cite{hong2024metagpt}, and
+AutoCodeRover combines code search with spectrum-based fault
+localisation~\cite{zhang2024autocoderover}, all evaluated on issue-resolution
+benchmarks such as SWE-bench~\cite{jimenez2024swebench}. Design decisions in such
+systems are themselves an object of study~\cite{batole2025designissue}, and the
+broader question of how developers and models collaborate has its own
+literature~\cite{liang2024survey,barke2023copilot,stray2025humanai,treude2025taxonomy}.
+This paper contributes a measurement to that strand rather than a new
+architecture: what a specific decomposition did and did not buy, on a task where
+the retrieval corpus is live rather than fixed.
+
+\subsection{Retrieval-Augmented Generation for Software Engineering Tasks}
+
+Retrieval augmentation is applied across software engineering: retrieving
+demonstrations for code-related generation~\cite{nashid2023retrieval}, and
+retrieval-augmented approaches to code intelligence more
+broadly~\cite{yang2025ragcode}. Recent work applies agentic retrieval to bug
+localisation~\cite{mamun2026blagent} and to reformulating developer queries for
+retrieval~\cite{caumartin2026reformulate}. Query reformulation for software search
+predates the language-model literature: Haiduc et al. showed that automatically
+reformulating a poorly performing query improves retrieval for concept
+location~\cite{haiduc2013reformulation}, which is the same operation this paper
+studies and, in Section~\ref{sec:localizing}, finds can be applied in a way that
+loses documents.
 
 \subsection{Multi-Agent RAG Frameworks}
 
@@ -1171,6 +1205,14 @@ Two properties of the upstream feeds would have injected false questions into
 the benchmark had they been consumed naively. We report them because they are
 properties of the public data sources rather than of our pipeline, and anyone
 building on the same feeds will encounter them.
+
+This is not an isolated quirk of one feed. Vulnerability-database metadata is
+known to be noisy: affected-version and severity records in the NVD contain
+substantial inaccuracy~\cite{croft2023dataquality,croft2022severity,anwar2022nvd},
+and inconsistencies between advisory text and structured metadata have been
+documented at scale~\cite{dong2019inconsistencies}. Downstream models trained on
+such labels inherit the noise~\cite{chakraborty2022vulndetection}. What follows is
+the form the problem takes in the feeds used here.
 
 First, on advisory records the product field names the \emph{index token} under
 which the advisory was filed, not the affected product. An advisory for ``Mocha
@@ -2213,6 +2255,15 @@ to claim it does. It establishes that on this benchmark, for this domain, with
 these metrics, decomposition did not improve answer quality over a
 well-configured single-agent baseline --- and that the improvement originally
 attributed to decomposition was an artifact of the metric used to measure it.
+
+The result is not isolated. In program repair, Xia et al. report that a
+deliberately non-agentic pipeline matches or exceeds agent-based systems on
+SWE-bench Lite at lower cost~\cite{xia2025agentless}, and a study of LLM agents on
+software engineering tasks finds their advantage over simpler pipelines to be
+narrower than the framing around them
+suggests~\cite{wang2024rocks}. Read together with ours, these
+suggest that where agentic decomposition pays is a question that needs
+establishing per task rather than assuming.
 Three qualifications bound that claim:
 
 \begin{itemize}
@@ -2248,22 +2299,43 @@ precisely that. The metric and the mechanism were, in effect, correlated
 through the same vocabulary.
 
 We think this is a general hazard for agentic-system evaluation rather than a
-mistake peculiar to this work. Domain-specific systems frequently define
-domain-specific quality measures, with good justification: standard IR metrics
-require relevance judgments, which are expensive. But a bespoke measure designed
-by the same people who designed the architecture will tend to reward the
-behaviors the architecture produces. The practical mitigation is not to abandon
-domain measures but to report at least one metric whose definition is
-independent of the system --- pooled-judgment IR metrics, or a deterministic
-benchmark score --- and to treat a disagreement between them as a finding
-requiring explanation rather than a discrepancy to be reconciled toward the
-preferred result.
+mistake peculiar to this work, and software engineering research has a name for
+it. What failed here is \emph{construct validity}: the degree to which a measure
+actually captures the concept it is claimed to measure~\cite{wohlin2012experimentation,
+kitchenham2002guidelines}. It is a recognised and recurring weakness in empirical
+software engineering~\cite{sjoberg2007future,siegmund2015validity,verdecchia2023threats,lago2024threats},
+and Ralph and Tempero observe that software metrics are routinely adopted without
+evidence that they measure what they are taken to measure~\cite{ralph2018construct}.
+
+The field also has precedent for the specific shape of this failure: a
+convenient proxy, widely used because it is cheap to compute, turning out not to
+track the property it stands in for. Statement coverage was shown not to predict
+test-suite fault detection once suite size is controlled~\cite{inozemtseva2014coverage},
+and mutants were accepted as a substitute for real faults only after being
+validated against them rather than assumed to be
+equivalent~\cite{just2014mutants,papadakis2018mutation}. Keyword overlap standing in
+for retrieval quality is the same structure, and the same remedy applies:
+validate the proxy against the thing it replaces, or report both.
+
+Domain-specific systems will continue to define domain-specific quality measures,
+with good justification, since standard IR metrics require relevance judgments and
+those are expensive. But a bespoke measure designed by the same people who
+designed the architecture will tend to reward the behaviors the architecture
+produces. The practical mitigation is not to abandon domain measures but to
+report at least one metric whose definition is independent of the system ---
+pooled-judgment IR metrics, or a deterministic benchmark score --- and to treat a
+disagreement between them as a finding requiring explanation rather than a
+discrepancy to be reconciled toward the preferred result.
 
 Our answer-quality measurements carry the same lesson in a second form.
 Comparing the multi-agent system's structured template against the baseline's
 prose showed a 0.23 faithfulness deficit that disappeared entirely when the same
 retrieved documents were synthesized through the baseline's own prompt
-(Section~\ref{sec:scaled-eval}). An LLM judge comparing structured output
+(Section~\ref{sec:scaled-eval}). The reliability of language models as judges of
+software engineering artefacts is itself under active
+scrutiny~\cite{wang2025llmjudge,crupi2025judge,he2026judgese,zhou2025sejury}, and
+our observation is a specific instance of why that scrutiny is
+warranted. An LLM judge comparing structured output
 against fluent prose is partly scoring fluency. Any evaluation of an agentic
 system that emits structured output against a baseline that emits prose is
 exposed to this, and detecting it required constructing an arm for no purpose
