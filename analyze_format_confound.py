@@ -31,20 +31,54 @@ import collections
 import json
 import os
 import statistics as st
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 TEMPLATE_ARM, PROSE_ARM, BASELINE = "marag", "marag_llm", "single_agent"
 
 
-def load_run(run_dir: str) -> Tuple[dict, dict]:
-    rows = [json.loads(l) for l in open(os.path.join(run_dir, "per_query.jsonl"))
-            if l.strip()]
+def load_run(run_dir: str, extra_runs: Optional[List[str]] = None) -> Tuple[dict, dict]:
+    """
+    Load a run, optionally folding in arms measured in other run directories.
+
+    An arm can end up in its own directory (a --resume that did not take, a run
+    launched separately). Reading it in here keeps the original artifacts
+    untouched, and pairs with `identical_retrieval_only` below: rather than
+    asserting the runs are equivalent, drop the questions where they demonstrably
+    are not.
+    """
+    def _read(d):
+        return [json.loads(l) for l in open(os.path.join(d, "per_query.jsonl"))
+                if l.strip()]
+
+    rows = _read(run_dir)
+    for extra in (extra_runs or []):
+        rows.extend(_read(extra))
     by_query: Dict[object, Dict[str, dict]] = collections.defaultdict(dict)
     for r in rows:
         by_query[r["query_id"]][r["system"]] = r
     qrels_path = os.path.join(run_dir, "qrels.json")
     qrels = json.load(open(qrels_path)) if os.path.exists(qrels_path) else {}
     return by_query, qrels
+
+
+def identical_retrieval_only(by_query: dict, a: str, b: str) -> Tuple[dict, List]:
+    """
+    Keep only questions where two arms retrieved the identical ranked documents.
+
+    The format claim rests on the two multi-agent arms differing in nothing but
+    rendering. When they were measured in separate runs over a corpus that was
+    not truly frozen, some questions saw different documents, and on those a
+    difference in answer scores is not a format effect. Dropping them is what
+    makes the remainder interpretable; the count of dropped questions is
+    reported rather than hidden.
+    """
+    kept, dropped = {}, []
+    for qid, d in by_query.items():
+        if a in d and b in d and d[a]["doc_ids"] != d[b]["doc_ids"]:
+            dropped.append(qid)
+        else:
+            kept[qid] = d
+    return kept, sorted(dropped, key=str)
 
 
 def retrieval_identical(by_query: dict, a: str, b: str) -> Tuple[int, int]:
@@ -111,11 +145,27 @@ def _line(d: dict) -> str:
             f"(n={d['n']})")
 
 
-def report(run_dir: str) -> str:
-    by_query, qrels = load_run(run_dir)
+def report(run_dir: str, extra_runs: Optional[List[str]] = None,
+           identical_only: bool = False) -> str:
+    by_query, qrels = load_run(run_dir, extra_runs)
+    dropped: List = []
+    if identical_only:
+        by_query, dropped = identical_retrieval_only(
+            by_query, TEMPLATE_ARM, PROSE_ARM)
     arms = sorted({s for d in by_query.values() for s in d})
     L = [f"# Format vs retrieval decomposition — `{os.path.basename(run_dir)}`", ""]
     L.append(f"Arms present: {', '.join(arms)}  ·  questions: {len(by_query)}")
+    if extra_runs:
+        L.append("")
+        L.append(f"Arms folded in from: "
+                 + ", ".join(f"`{os.path.basename(e.rstrip(os.sep))}`" for e in extra_runs))
+    if dropped:
+        L.append("")
+        L.append(f"**{len(dropped)} question(s) dropped** because `{TEMPLATE_ARM}` "
+                 f"and `{PROSE_ARM}` retrieved different documents there, so a "
+                 f"difference between them would not be a format effect: "
+                 f"{dropped}. This happens when the arms were measured in "
+                 f"separate runs over a corpus that was not actually frozen.")
     L.append("")
 
     same, total = retrieval_identical(by_query, TEMPLATE_ARM, PROSE_ARM)
@@ -172,8 +222,13 @@ def main() -> None:
     ap.add_argument("run_dir")
     ap.add_argument("--out", default="format_confound.md",
                     help="filename written inside run_dir")
+    ap.add_argument("--extra-run", action="append", default=[], metavar="RUN_DIR",
+                    help="fold in arms measured in another run directory")
+    ap.add_argument("--identical-only", action="store_true",
+                    help="keep only questions where the two multi-agent arms "
+                         "retrieved the identical ranked documents")
     a = ap.parse_args()
-    text = report(a.run_dir)
+    text = report(a.run_dir, a.extra_run, a.identical_only)
     print(text)
     path = os.path.join(a.run_dir, a.out)
     open(path, "w").write(text + "\n")

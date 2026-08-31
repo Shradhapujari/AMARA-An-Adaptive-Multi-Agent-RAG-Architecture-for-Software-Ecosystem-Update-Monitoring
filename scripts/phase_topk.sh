@@ -18,7 +18,16 @@
 # control -- it must reproduce the embed arm of scripts/phase_ablation.sh.
 #
 # Read the results with: scripts/topk_report.py
+# Everything runs inside main() so that bash parses the whole script before the
+# first pass starts. Bash streams a script from a byte offset while it runs, so
+# an edit landing mid-sweep shifts those offsets under the running shell -- on
+# 2026-08-30 that killed a 4-hour ablation after its first pass, when a commit
+# touched scripts/phase_ablation.sh while it was executing. A function body is
+# parsed to its closing brace before any of it runs, so a later edit cannot
+# reach a sweep already in flight.
 set -euo pipefail
+
+main() {
 cd "$(dirname "$0")/.."
 
 DATASET="${1:?usage: phase_topk.sh <dataset.json> <snapshot-dir> [k ...]}"
@@ -83,3 +92,10 @@ done
 
 echo "" | tee -a "$LOG"
 echo "##### TOPK DONE | $(date +%H:%M:%S) — now run: scripts/topk_report.py" | tee -a "$LOG"
+}
+
+# `exit` and not a bare call: it stops bash before it reads another byte of
+# this file, so bytes appended mid-run cannot execute after main returns
+# and cannot turn a clean sweep into a non-zero exit.
+main "$@"
+exit $?

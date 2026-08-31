@@ -48,9 +48,15 @@ from eval_harness.compare import paired_t_test, win_tie_loss
 METRICS = ["faithfulness", "answer_relevance"]
 
 
-def load_rows(run_dir: str) -> List[dict]:
-    with open(os.path.join(run_dir, "per_query.jsonl")) as f:
-        return [json.loads(l) for l in f if l.strip()]
+def load_rows(run_dir: str, extra_runs: Optional[List[str]] = None) -> List[dict]:
+    """Rows from a run, plus any arms that landed in their own directories."""
+    def _read(d):
+        with open(os.path.join(d, "per_query.jsonl")) as f:
+            return [json.loads(l) for l in f if l.strip()]
+    rows = _read(run_dir)
+    for extra in (extra_runs or []):
+        rows.extend(_read(extra))
+    return rows
 
 
 def contexts_of(row: dict) -> List[str]:
@@ -161,6 +167,11 @@ def main() -> None:
                     help="questions to re-judge (0 = all)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", default="judge_robustness.md")
+    ap.add_argument("--extra-run", action="append", default=[], metavar="RUN_DIR",
+                    help="fold in arms measured in another run directory")
+    ap.add_argument("--identical-retrieval", action="store_true",
+                    help="restrict to questions where the two arms retrieved "
+                         "the identical ranked documents")
     a = ap.parse_args()
 
     arms = [x.strip() for x in a.arms.split(",")]
@@ -172,7 +183,18 @@ def main() -> None:
         raise SystemExit(f"judge {judge.spec} is not available "
                          f"(is it pulled? `ollama pull {a.judge.split(':',1)[1]}`)")
 
-    rows = load_rows(a.run_dir)
+    rows = load_rows(a.run_dir, a.extra_run)
+    if a.identical_retrieval:
+        seen: Dict[object, Dict[str, dict]] = collections.defaultdict(dict)
+        for r in rows:
+            seen[r["query_id"]][r["system"]] = r
+        bad = {q for q, d in seen.items()
+               if all(x in d for x in arms) and
+               d[arms[0]]["doc_ids"] != d[arms[1]]["doc_ids"]}
+        if bad:
+            print(f"[filter] dropping {len(bad)} question(s) where the arms "
+                  f"retrieved different documents: {sorted(bad, key=str)}")
+        rows = [r for r in rows if r["query_id"] not in bad]
     original_judge = "unknown"
     cfg_path = os.path.join(a.run_dir, "config.json")
     if os.path.exists(cfg_path):

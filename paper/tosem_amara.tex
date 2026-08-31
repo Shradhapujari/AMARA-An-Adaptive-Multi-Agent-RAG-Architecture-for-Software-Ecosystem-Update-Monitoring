@@ -67,16 +67,18 @@ retrieval-level feedback loop and a persistent term-weight memory --- and
 measured a 17.2\% retrieval improvement over a single-agent baseline on a
 keyword-overlap quality score of our own design. Re-scored with standard
 information-retrieval metrics over pooled relevance judgments, the same system
-\emph{lost} to the same baseline (nDCG@3 0.145 versus 0.765). The
+\emph{lost} to the same baseline (nDCG@3 0.145 versus 0.765; paired deficit
+0.620, exact Wilcoxon $p=0.016$, $n=10$). The
 disagreement was not a metric artifact. Because the rewritten query
 \emph{replaced} the user's wording at every retrieval endpoint, 22 of the 23
 relevant documents the baseline found were never fetched by the multi-agent
 pipeline at all. Three successively stronger rerankers raised mean reciprocal
 rank from 0.250 to 0.625 while leaving nDCG@3 near 0.19, because reranking
 cannot promote a document that was never retrieved. Issuing both the original
-and the rewritten phrasing and unioning the candidate pools raises nDCG@3 to
-0.973 in one step, and on a 100-question benchmark spanning 24 software
-ecosystems it reduces the fetch-time loss from 96\% to 14.7\%.
+and the rewritten phrasing and unioning the candidate pools raises nDCG@3 from
+0.188 to 0.765 in one step, and on a 100-question benchmark spanning 21 software
+ecosystems it reduces the share of the baseline's relevant documents missing
+from the candidate pool from 96\% to 12\%.
 
 We draw four conclusions for practitioners building agentic software
 engineering tools. First, query rewriting must augment retrieval rather than
@@ -86,15 +88,45 @@ ordering that standard IR metrics produce, so architectural claims resting on
 one are not safe. Third, an apparent 0.23 faithfulness deficit for the
 multi-agent system proved to be an artifact of answer \emph{format} --- a
 structured template judged against fluent prose --- and vanished when the same
-retrieval was synthesized through the baseline's own prompt (0.924 versus
-0.929). Fourth, and least comfortable: with both defects repaired and the
+retrieval was synthesized through the baseline's own prompt (0.926 versus
+0.931). Fourth, and least comfortable: with both defects repaired and the
 synthesis model held constant, the multi-agent pipeline \emph{matches} rather
-than beats the single-agent baseline on retrieval (nDCG@3 0.865 versus 0.869,
-$n=96$) at roughly twice the latency, so decomposition per se is not what
+than beats the single-agent baseline on retrieval (nDCG@3 0.859 versus 0.863,
+$n=100$) at roughly twice the latency, so decomposition per se is not what
 produced the original result. We release the architecture, the evaluation
 harness, and a 300-question benchmark mined from live release, advisory, and
 community sources.
 \end{abstract}
+
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10002951.10003317.10003338</concept_id>
+       <concept_desc>Information systems~Retrieval models and ranking</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10002951.10003317.10003359</concept_id>
+       <concept_desc>Information systems~Evaluation of retrieval results</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10011007.10011074.10011081</concept_id>
+       <concept_desc>Software and its engineering~Software maintenance tools</concept_desc>
+       <concept_significance>300</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10010147.10010178.10010179</concept_id>
+       <concept_desc>Computing methodologies~Natural language processing</concept_desc>
+       <concept_significance>300</concept_significance>
+       </concept>
+ </ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Information systems~Retrieval models and ranking}
+\ccsdesc[500]{Information systems~Evaluation of retrieval results}
+\ccsdesc[300]{Software and its engineering~Software maintenance tools}
+\ccsdesc[300]{Computing methodologies~Natural language processing}
 
 \keywords{Multi-Agent Systems, Retrieval-Augmented Generation, Query Rewriting,
 Retrieval Evaluation, Software Ecosystem Monitoring, Negative Results,
@@ -127,7 +159,9 @@ the conference version of this work.
 Re-scoring the same pipeline with standard information-retrieval metrics ---
 nDCG@$k$, Recall@$k$, and MRR over relevance judgments pooled across systems ---
 reversed the ordering. The single-agent baseline reached nDCG@3 of 0.765; the
-multi-agent architecture reached 0.145. A 17.2\% advantage on one metric
+multi-agent architecture reached 0.145, a paired per-query deficit of 0.620
+(bootstrap 95\% CI $[0.348, 0.865]$, exact Wilcoxon signed-rank $p=0.016$,
+$n=10$). A 17.2\% advantage on one metric
 coexisted with a factor-of-five deficit on another, over the same questions, the
 same corpus, and the same retrieved documents.
 
@@ -154,7 +188,7 @@ raised MRR monotonically from 0.250 to 0.500 to 0.625, while nDCG@3 stayed near
 0.19. A ranking fix that cannot close a ranking gap is evidence that the
 documents are not there to be ranked. Searching both the original and the
 rewritten phrasing and unioning the candidate pools moves nDCG@3 from 0.188 to
-0.973 in a single change.
+0.765 in a single change.
 
 \subsection{Contributions}
 
@@ -430,12 +464,50 @@ RAGAS~\cite{es2024ragas} and ARES~\cite{saadfalcon2024ares} estimate
 faithfulness and relevance without gold answers.
 
 Two aspects of that practice bear on the metric inversion reported here. The
-first is judge independence. LLM judges agree with human preferences at rates
-comparable to human--human agreement, but the same study documents position,
-verbosity, and self-enhancement biases~\cite{zheng2023judge}, and evaluators
-recognize and favor text they themselves generated~\cite{panickssery2024self}. A
-judge that is also the pipeline's generator, or that is prompted with the
-pipeline's own notion of relevance, is not independently measuring it. The second
+first is judge independence, and the IR literature has by now measured it
+precisely enough to be quantitative about what an LLM judge can and cannot
+support. The encouraging result is at the level of system \emph{ordering}:
+UMBRELA, an open-source reproduction of Bing's assessor, induces rankings that
+agree with NIST qrels on the TREC Deep Learning tracks at Kendall's $\tau$ of
+0.873 to 0.944~\cite{upadhyay2024umbrela}, and Thomas et al.\ report run-level
+$\tau$ of 0.77 to 0.86 over 110 TREC-Robust runs~\cite{thomas2024preferences}.
+The discouraging result is at the level of individual \emph{labels}, which is
+what a qrel file actually contains: UMBRELA's per-item Cohen's
+$\kappa$~\cite{cohen1960coefficient} against
+human assessors is only 0.31 to 0.37 on the four-point
+scale~\cite{upadhyay2024umbrela}, and Faggioli et al.\ measure $\kappa=0.26$ on
+the TREC-DL 2021 pool against $\kappa=0.52$ between two groups of human
+assessors~\cite{faggioli2023perspectives}. Agreement is also asymmetric:
+LLM judges over-label relevance, so a machine ``not relevant'' label is
+considerably more trustworthy than a machine ``relevant'' one, and they can be
+induced to grade a passage of randomly sampled words as perfectly relevant
+simply by injecting the query string into
+it~\cite{alaofi2024fooled}. Faggioli et al.\ accordingly place practice on a
+spectrum from human judgment through AI assistance and human verification to
+full automation, and decline to endorse the fully automated
+endpoint~\cite{faggioli2023perspectives}; Soboroff argues the stronger position
+that whatever generates the qrels also defines the ceiling, so a system better
+than the judge cannot be measured as
+such~\cite{soboroff2025dontuse}.
+
+Circularity is the specific form of this problem that a multi-agent pipeline
+invites, and its cost has been simulated. Clarke and Dietz re-ranked all 75 runs
+of the TREC 2024 RAG track with UMBRELA and then scored them with UMBRELA:
+agreement with human judgments fell from $\tau \approx 0.84$ to 0.38 at rank~10
+and to $-0.40$ at rank~5, twelve systems exceeded nDCG 0.95 where manual
+assessment placed them at 0.68 to 0.72, and a deliberately constructed run rose
+from 28th under human assessment to 5th under automatic
+assessment~\cite{clarke2024cannot}. The same effect is documented at the level
+of preference: judges recognize and favor text they themselves
+generated~\cite{panickssery2024self}, and LLM-as-judge studies report position,
+verbosity, and self-enhancement biases~\cite{zheng2023judge}. A judge that is
+also the pipeline's generator, or that is prompted with the pipeline's own
+notion of relevance, is not independently measuring it. There is one direction
+in which this literature works in favour of a finding rather than against it:
+because LLM judges are documented to penalize lexically grounded retrieval
+relative to LLM-mediated retrieval~\cite{faggioli2023perspectives}, a result in
+which the plainer, non-rewriting system \emph{wins} is not the result this bias
+would manufacture. The second
 is abstention. The CRAG benchmark scores an accurate answer $1$, a missing answer
 $0$, and an incorrect answer $-1$, explicitly preferring an admission of
 ignorance to a confident
@@ -619,6 +691,7 @@ feedback.
 \end{tikzpicture}%
 }
 \caption{Adaptive multi-agent RAG architecture.}
+\Description{Block diagram of the adaptive multi-agent architecture. A user question enters an Orchestrator agent, which delegates to a Query Rewriter, a Retriever, and an Evaluator in sequence. The Retriever draws on software ecosystem documents comprising release notes, community discussions, and security advisories. The Evaluator scores retrieval quality and can return control to the Orchestrator to retry retrieval before an answer is generated.}
 \label{fig:architecture}
 \end{figure}
 
@@ -674,7 +747,7 @@ These scores are subsequently used by the Query Rewriter to influence
 future retrieval queries. This mechanism provides adaptation without
 human preference labels, manual annotation, or model retraining.
 
-\subsection{Software Ecosystem Data Sources}
+\subsection{Software Ecosystem Data Sources}\label{sec:datasources}
 
 The system retrieves information from software ecosystem documents
 obtained through multiple API endpoints.
@@ -713,9 +786,10 @@ The Query Rewriter is prompted for a retrieval-oriented restatement of
 at most 20 words directed at bug fixes, releases, changelogs, security
 patches, and performance. It therefore introduces terms frequent in the
 collection and absent from the question, and drops terms rare in the
-collection and decisive in the question. Both effects raise recall and
-lower the precision of any ordering computed from the rewrite, so we
-adopt a single design rule and apply it throughout the Retriever:
+collection and decisive in the question. We expected both effects to raise
+recall while lowering the precision of any ordering computed from the rewrite,
+and on that expectation we adopt a single design rule and apply it throughout
+the Retriever:
 
 \begin{quote}
 \emph{The rewritten query determines what is fetched. The original
@@ -801,7 +875,8 @@ phrasing; \emph{server-side} endpoints pass the phrasing as a request
 parameter.}
 \label{tab:endpoints}
 \small
-\begin{tabular}{@{}llll@{}}
+\footnotesize
+\begin{tabular}{@{}p{0.26\linewidth}@{\hspace{6pt}}c@{\hspace{6pt}}p{0.30\linewidth}@{\hspace{6pt}}p{0.26\linewidth}@{}}
 \toprule
 Endpoint & Tier & Phrasing enters as & Queried when \\
 \midrule
@@ -983,11 +1058,112 @@ The synthesis process follows six rules:
 \item Report when no matching vendor-specific information is available.
 \end{enumerate}
 
-\subsection{Experimental Setup}
+\subsection{A Multi-Ecosystem Benchmark}\label{sec:benchmark}
 
-The evaluation dataset consists of 50 software update questions
-spanning security, bug, release, community, and general software
-maintenance topics. The local fallback dataset contains 324 Reddit
+The evaluation in the conference version used 50 questions drawn from a single
+community source, which is too few to separate an architectural effect from
+noise and too narrow to say anything about ecosystems other than the ones those
+questions happened to mention. We therefore constructed a larger benchmark, and
+we describe its construction here in enough detail to expose its biases, because
+a benchmark assembled by the authors of the system it evaluates warrants that
+scrutiny.
+
+\subsubsection{Construction}
+
+The benchmark contains 300 questions arranged as a $24 \times 5$ grid of
+software ecosystem by question category, filled to 12 or 13 questions per
+ecosystem and exactly 60 per category. The 24 ecosystems span mobile and desktop
+platforms (Apple iOS, Apple macOS, Android, Windows), four Linux distributions
+(Ubuntu, Debian, Fedora, Arch) and the kernel itself, browsers (Firefox,
+Chrome), container infrastructure (Docker, Kubernetes), language package
+ecosystems (npm/Node, pip/Python, cargo/Rust), self-hosted and home applications
+(Home Assistant, NAS/self-hosted, WordPress), databases (PostgreSQL, MySQL,
+NoSQL), developer tooling, and LLM/AI model releases. The five categories are
+releases, bugs, security, community, and general.
+
+Every question is mined from live data rather than authored: 249 are verbatim
+titles of real community posts, and 51 are generated from real release or
+advisory records. No question is a template with a hand-written stem. The
+builder draws from a pool of 9,923 community posts and the release and advisory
+endpoints described in Section~\ref{sec:datasources}, and it is deterministic:
+a fixed seed, an on-disk response cache, and an \texttt{--offline} mode that
+replays the cache, so two runs of the builder produce byte-identical output.
+Each record carries the endpoint and record type it came from, so mined and
+generated questions remain distinguishable in any analysis.
+
+\subsubsection{Two Upstream Data Defects}
+
+Two properties of the upstream feeds would have injected false questions into
+the benchmark had they been consumed naively. We report them because they are
+properties of the public data sources rather than of our pipeline, and anyone
+building on the same feeds will encounter them.
+
+First, on advisory records the product field names the \emph{index token} under
+which the advisory was filed, not the affected product. An advisory for ``Mocha
+Telnet Lite for iOS 4.2'' is stored with product \texttt{iOS} and version
+\texttt{4.2.0}; advisories concerning Velero are stored under
+\texttt{Kubernetes}. Templating those fields directly yields questions such as
+\emph{``Is iOS v4.2.0 vulnerable?''}, which assert a falsehood in the question
+itself and would be scored against a system for failing to confirm it. The
+builder instead parses the affected product and version out of the advisory
+text, keeps a record only when the parsed product belongs to a tracked
+ecosystem, and discards the rest: of 3,113 advisory rows, 548 parsed and 268
+could be confidently attributed.
+
+Second, a minority of records carry malformed dates (for example
+\texttt{23.30.13102017} and \texttt{2025[29]0213}). Since date agreement is one
+of the two decisive facts in this domain, these records are dropped rather than
+normalized by guessing.
+
+We also stopped trusting the feed's own topical flags. Its CVE-relatedness flag
+fires on posts such as \emph{``Best budget AI subscription / API tokens?''}, so
+it is used only to break ties within the security category rather than to assign
+one.
+
+\subsubsection{Ground Truth and Its Limits}
+
+Of the 300 questions, 51 carry a reference answer, and only those generated from
+release or advisory records do --- a community post title states a question but
+does not come with an authoritative answer. Ground-truth coverage is therefore
+concentrated in the releases and security categories, and any correctness or
+hallucination measurement over this benchmark is computed on that subset rather
+than on all 300 questions.
+
+This has a consequence for sampling that we did not anticipate and that a
+reader reusing the benchmark should know. A subset selected to balance ecosystem
+and category, without regard to ground truth, can leave almost none: our first
+100-question stratified selection carried a reference answer on 2 questions. A
+selection that prefers ground-truth records within each grid cell retains 28.
+Reported retrieval metrics are unaffected --- they rest on pooled relevance
+judgments, not reference answers --- but any answer-correctness figure requires
+the second kind of selection, and we report retrieval and answer-faithfulness
+results rather than correctness for this reason.
+
+\subsubsection{Coverage Gaps}
+
+One of the 120 grid cells (Arch $\times$ security) had no live candidate
+available at build time. Rather than synthesize one, the builder logs the gap
+and fills the category quota from other ecosystems, so the category totals hold
+exactly while that single cell is empty. Nineteen product-name lookups returned
+404 because the product is not in the vendor catalogue (npm, pip, cargo,
+Synology, Home Assistant, NixOS, GitLab among them); this is a catalogue
+coverage limitation rather than an endpoint failure, and the affected ecosystems
+are represented through their community and release records instead.
+
+\subsection{Experimental Setup}\label{sec:setup}
+
+Three evaluation sets are used, and they answer different questions.
+The \emph{original} set is 50 software update questions spanning security, bug,
+release, community, and general maintenance topics; it is the set on which the
+superseded bespoke score was measured (Section~\ref{sec:two-metrics}). The
+\emph{ground-truth} set is 10 questions carrying reference answers, used for the
+diagnostic measurements in Sections~\ref{sec:two-metrics}
+and~\ref{sec:localizing} because relevance judgments and document-level counting
+are tractable at that size. The \emph{benchmark} set is the 300 questions of
+Section~\ref{sec:benchmark}, from which a 100-question subset balanced across
+category and ecosystem carries the scaled evaluation
+(Section~\ref{sec:scaled-eval}). Sample sizes are stated with every reported
+number, since they differ across these three. The local fallback dataset contains 324 Reddit
 posts collected through the software ecosystem data lake and filtered
 using minimum quality criteria of at least 10 comments, 3 author
 replies, and a quality score of at least 0.30.
@@ -1010,7 +1186,7 @@ This section presents the evaluation results of the proposed adaptive
 multi-agent RAG architecture. The evaluation examines retrieval quality,
 answer accuracy, adaptive feedback behavior, self-improvement
 performance, representative examples, failure modes, and implementation
-observations using a dataset of 50 software update questions.
+observations across the three evaluation sets of Section~\ref{sec:setup}.
 
 \subsection{Two Metrics, Two Orderings}\label{sec:two-metrics}
 
@@ -1036,7 +1212,12 @@ ground-truth validation questions.
 \begin{table}[t]
 \caption{The same two systems under the paper's own retrieval-quality score and
 under standard IR metrics. Bespoke score: $n=50$. IR metrics: $n=10$, pooled
-graded relevance, judge \texttt{llama3.1}.}
+graded relevance, judge \texttt{llama3.1}. The paired difference is
+multi-agent minus baseline over the same questions; $p$-values are exact
+two-sided Wilcoxon signed-rank, except the bespoke column, which is the paired
+$t$-test over 50 questions reported in the conference version. Confidence
+intervals are given in the text. The IR columns are reproduced by
+\texttt{scripts/inversion\_stats.py}.}
 \label{tab:inversion}
 \begin{tabular}{lrrrr}
 \toprule
@@ -1044,6 +1225,9 @@ System & bespoke score & nDCG@1 & nDCG@3 & MRR \\
 \midrule
 Single-agent baseline & 0.680 & \textbf{0.800} & \textbf{0.765} & \textbf{0.800} \\
 Multi-agent           & \textbf{0.798} & 0.133 & 0.145 & 0.250 \\
+\midrule
+Paired difference & $+0.118$ & $-0.667$ & $-0.620$ & $-0.550$ \\
+Exact $p$         & $0.020$ & $0.016$ & $0.016$ & $0.031$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1055,6 +1239,29 @@ the question and the retrieved set without reference to whether a retrieved
 document actually answers the question, it can be maximized by retrieving many
 topically adjacent documents. Standard IR metrics, scored against judged
 relevance, cannot be.
+
+Ten questions is few enough that the deficit deserves a test rather than an
+assertion, so we report exact ones. The multi-agent arm is worse on seven of the
+ten questions and tied on the remaining three, never better; the mean paired
+nDCG@3 difference is $-0.620$ with a percentile bootstrap 95\% CI of
+$[-0.865, -0.348]$, an exact two-sided Wilcoxon signed-rank $p$ of $0.016$, and
+a standardized effect size $d_z = -1.39$. A sign-flip permutation test on the
+mean difference gives the same $p$. The direction is consistent across every
+metric we computed: nDCG@1 $-0.667$, nDCG@5 $-0.632$, MRR $-0.550$, Recall@5
+$-0.550$, with $p \le 0.031$ throughout.
+
+Two caveats bound what those numbers establish, and we state them because the
+sample size makes both load-bearing. First, the Wilcoxon test discards tied
+pairs, leaving seven; with seven nonzero pairs the smallest two-sided $p$ the
+design can return is $2/2^{7} = 0.0156$. The observed $p$ \emph{is} that floor,
+so the correct reading is that every non-tied question favours the baseline ---
+the strongest signal obtainable at this $n$ --- and not that the evidence would
+survive a stricter threshold. Second, the confidence intervals are wide: they
+place the deficit somewhere between roughly a third and nine tenths of the
+metric's range. They establish the sign and the order of magnitude of the
+inversion, which is the claim this section makes, and they do not pin its
+magnitude. The magnitude claim we do make quantitatively is the document count
+in Section~\ref{sec:localizing}, which does not depend on an interval estimate.
 
 \subsection{Localizing the Loss: Ranking or Retrieval?}\label{sec:localizing}
 
@@ -1088,14 +1295,14 @@ within-panel~(b) contrast is not.}
 Ranking function & Scored against & nDCG@3 & MRR & Recall@5 \\
 \midrule
 \multicolumn{5}{l}{\emph{(a) Single-phrasing retrieval: the rewritten query only}} \\
-Substring boost & original question & 0.145 & 0.250 & 0.145 \\
-Okapi BM25      & original question & 0.212 & 0.500 & 0.203 \\
+Substring boost & original question & 0.145 & 0.250 & 0.200 \\
+Okapi BM25      & original question & 0.212 & 0.500 & 0.343 \\
 Embedding cosine & original question & 0.188 & 0.625 & 0.327 \\
 \midrule
 \multicolumn{5}{l}{\emph{(b) Union retrieval: both phrasings issued, pools merged}} \\
 Substring boost & rewritten query  & 0.597 & 0.650 & 0.650 \\
 Substring boost & original question & 0.621 & 0.667 & 0.611 \\
-Embedding cosine & original question & \textbf{0.973} & \textbf{1.000} & \textbf{0.933} \\
+Embedding cosine & original question & \textbf{0.765} & \textbf{1.000} & 0.165 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1139,7 +1346,7 @@ what Table~\ref{tab:ranking-ablation} shows.
 
 The remedy follows directly and is stated in Section~\ref{sec:union-fetch}: issue
 both phrasings and union the candidate pools. The final row of
-Table~\ref{tab:ranking-ablation} gives its effect --- nDCG@3 from 0.188 to 0.973
+Table~\ref{tab:ranking-ablation} gives its effect --- nDCG@3 from 0.188 to 0.765
 in a single change, with no modification to ranking, generation, or the
 evaluator. Notably, the multi-agent pipeline had all along been retrieving
 relevant documents the baseline missed; its candidate set was not worse so much
@@ -1151,9 +1358,9 @@ recovers the loss.
 The preceding measurements use ten ground-truth questions and are diagnostic
 rather than conclusive. To test whether the repaired pipeline holds up, we
 evaluated on a 100-question stratified subset of the 300-question benchmark
-(Section~\ref{sec:method}), balanced across all five question categories at 20
-each and covering 21 of the 24 software ecosystems. Ninety-six questions
-completed across all three systems and are reported here.
+(Section~\ref{sec:benchmark}), balanced across all five question categories at 20
+each and covering 21 of the 24 software ecosystems. All 100 questions completed
+across all three systems.
 
 Three systems were run with the synthesis model held constant at Llama 3.1 8B,
 which isolates architecture from model:
@@ -1170,17 +1377,16 @@ which isolates architecture from model:
 
 \begin{table}[t]
 \caption{Retrieval quality on the 100-question stratified benchmark subset
-($n=96$), pooled graded relevance, judge \texttt{llama3.1}. Brackets give
-bootstrap 95\% confidence intervals. The two retrieval arms are identical by
-construction; they differ only in answer synthesis.}
+($n=100$), pooled graded relevance, judge \texttt{llama3.1}. The two retrieval
+arms are identical by construction; they differ only in answer synthesis.}
 \label{tab:scaled-retrieval}
 \begin{tabular}{lrrrr}
 \toprule
 System & nDCG@3 & nDCG@5 & MRR & Recall@5 \\
 \midrule
-marag         & 0.865 [0.80, 0.92] & 0.867 [0.81, 0.92] & 0.892 [0.83, 0.95] & 0.866 [0.80, 0.92] \\
-marag\_llm    & 0.865 [0.80, 0.92] & 0.867 [0.81, 0.92] & 0.892 [0.83, 0.95] & 0.866 [0.80, 0.92] \\
-single\_agent & 0.869 [0.81, 0.92] & 0.876 [0.82, 0.93] & 0.895 [0.83, 0.95] & 0.875 [0.82, 0.93] \\
+marag         & 0.859 & 0.861 & 0.885 & 0.860 \\
+marag\_llm    & 0.859 & 0.861 & 0.885 & 0.860 \\
+single\_agent & 0.863 & 0.870 & 0.888 & 0.868 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1188,13 +1394,16 @@ single\_agent & 0.869 [0.81, 0.92] & 0.876 [0.82, 0.93] & 0.895 [0.83, 0.95] & 0
 Table~\ref{tab:scaled-retrieval} reports retrieval quality. The repaired
 multi-agent pipeline and the single-agent baseline are indistinguishable: every
 difference is well within overlapping confidence intervals, and the baseline is
-nominally ahead on all four metrics. The fetch-time diagnostic of
-Section~\ref{sec:localizing}, recomputed on this larger set, falls from 96\% (22
-of 23) to \textbf{14.7\%} (23 of 156): the union remedy holds at scale, and the
-residual is the ordinary variation of two systems retrieving from live sources.
+nominally ahead on all four metrics. The fetch-time diagnostic of Section~\ref{sec:localizing} --- the share of the
+baseline's relevant documents absent from the multi-agent \emph{candidate pool}
+--- stands at 22 of 23 on the ten ground-truth questions and at \textbf{19 of
+158 (12.0\%)} here. The two figures come from different question sets rather
+than from recomputing one on the other, but they are the same measurement, and
+the union remedy holds at this scale; the residual is the ordinary variation of
+two systems retrieving from live sources.
 
 \begin{table}[t]
-\caption{Answer quality and cost ($n=96$), LLM-judged. \texttt{marag} and
+\caption{Answer quality and cost ($n=100$), LLM-judged. \texttt{marag} and
 \texttt{marag\_llm} share a retrieval pipeline and differ only in how the answer
 is produced. Latency is the per-question median in seconds.}
 \label{tab:scaled-answer}
@@ -1202,19 +1411,69 @@ is produced. Latency is the per-question median in seconds.}
 \toprule
 System & Faithfulness & Answer relevance & Latency (s) \\
 \midrule
-marag (template answer) & 0.702 & 0.977 & 19.6 \\
-marag\_llm (prose answer) & 0.924 & 0.952 & 21.1 \\
-single\_agent & 0.929 & 0.973 & 9.5 \\
+marag (template answer) & 0.700 & 0.978 & 19.7 \\
+marag\_llm (prose answer) & 0.926 & 0.953 & 21.2 \\
+single\_agent & 0.931 & 0.973 & 9.6 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+\subsubsection{A Second Sample, and Why It Matters}
+
+The 100-question subset above balances category and ecosystem without regard to
+reference answers, which as Section~\ref{sec:benchmark} explains leaves almost
+none. We therefore repeated the evaluation on a second 100-question selection
+that prefers ground-truth records within each grid cell, retaining 28. This
+permits an answer-correctness measurement, and it provides an independent sample
+of the architecture comparison.
+
+\begin{table}[t]
+\caption{The same three systems on a second 100-question selection, one that
+retains 28 reference answers. Values are mean $\pm$ 95\% CI; correctness is
+computed only where a reference answer exists, with $n$ given per arm. The
+nominal ordering on retrieval is the reverse of
+Table~\ref{tab:scaled-retrieval}.}
+\label{tab:gt-run}
+\begin{tabular}{lrrrr}
+\toprule
+System & nDCG@3 & Faithfulness & Correctness & Latency (s) \\
+\midrule
+marag         & 0.781 $\pm$ 0.072 & 0.722 $\pm$ 0.039 & 0.296 ($n=26$) & 37.5 \\
+marag\_llm    & 0.781 $\pm$ 0.072 & 0.938 $\pm$ 0.030 & 0.367 ($n=24$) & 29.2 \\
+single\_agent & 0.768 $\pm$ 0.075 & 0.917 $\pm$ 0.034 & 0.326 ($n=27$) & 10.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:gt-run} is the most useful evidence in this section, for a reason
+that has nothing to do with which system is ahead. On this sample the
+multi-agent arm is nominally ahead on retrieval (0.781 versus 0.768), on
+faithfulness once format is matched (0.938 versus 0.917), and on correctness
+(0.367 versus 0.326). On the sample of Table~\ref{tab:scaled-retrieval} it was
+nominally behind on all of them. Every one of these differences sits inside
+overlapping confidence intervals in both runs. Two independent 100-question
+samples that disagree about the direction of the difference are stronger
+evidence that no difference is being measured than either sample is on its own,
+and we read the pair that way rather than selecting the favourable one.
+
+Three further observations. First, correctness is low for every arm --- between
+0.30 and 0.37 --- so on version-specific questions with a checkable answer, all
+three systems are wrong more often than right; retrieval parity should not be
+mistaken for adequacy. Second, the correctness sample sizes differ across arms
+(24 to 27) because an arm that abstains on a question yields no scoreable
+prediction, which is itself informative and is why the CRAG-style scoring treats
+abstention and error asymmetrically. Third, latency is not comparable between
+the two tables: this run shared the machine with other work, so its absolute
+figures are inflated. The within-run ratio --- roughly three times the
+baseline's median here, twice it in Table~\ref{tab:scaled-answer} --- is the
+quantity to read.
+
 Table~\ref{tab:scaled-answer} carries a methodological result worth stating
 separately. Comparing \texttt{marag} against \texttt{single\_agent} on
-faithfulness suggests a substantial deficit (0.702 versus 0.929). Comparing
+faithfulness suggests a substantial deficit (0.700 versus 0.931). Comparing
 \texttt{marag\_llm} against \texttt{single\_agent} --- the same retrieval, the
 same documents, differing only in whether the answer is a structured template or
-model prose --- gives 0.924 versus 0.929. The apparent deficit was almost
+model prose --- gives 0.926 versus 0.931. The apparent deficit was almost
 entirely an artifact of answer \emph{format}: an LLM judge scoring a structured
 template against fluent prose is partly scoring fluency. Any evaluation
 comparing an agentic system that emits structured output against a baseline that
@@ -1222,7 +1481,7 @@ emits prose is exposed to this, and we would not have detected it without an arm
 constructed specifically to remove it.
 
 On cost, the multi-agent pipeline takes approximately twice the median
-per-question latency of the baseline (19.6\,s versus 9.5\,s). This reflects the
+per-question latency of the baseline (19.7\,s versus 9.6\,s). This reflects the
 rewriter's generation call, the evaluator pass, and the additional retrieval
 calls the union incurs.
 
@@ -1241,7 +1500,7 @@ calls the union incurs.
   \item Issuing both the original and rewritten phrasings and unioning the
   candidate pools removes the deficit, and the remedy holds on a
   100-question multi-ecosystem benchmark, where the fetch-time loss falls from
-  96\% to 14.7\%.
+  96\% to 12\%.
   \item With both defects repaired and the synthesis model held constant, the
   multi-agent architecture \emph{matches} the single-agent baseline on retrieval
   and on faithfulness, at roughly twice the latency
@@ -1446,9 +1705,14 @@ same behavior following the update.''\\[2pt]
 \end{tikzpicture}%
 }
 \caption{
-Illustrative comparison of single-agent and multi-agent RAG
-architectures on a software update question.
+Illustrative execution traces on one software update question, recorded
+\emph{before} the substitution defect of Section~\ref{sec:localizing} was
+identified and repaired. The difference shown is a property of that defect and
+of these particular traces, not an architecture effect:
+Section~\ref{sec:scaled-eval} reports the two systems as statistically
+indistinguishable once it is fixed.
 }
+\Description{Side-by-side execution traces for the question about Siri issues following an iOS update. The single-agent path performs rewriting, retrieval, evaluation, and generation in one pass and yields an answer with limited supporting evidence. The multi-agent path routes the question through Orchestrator, Query Rewriter, Retriever, and Evaluator agents and yields an answer citing release documentation and community reports. Both traces predate the retrieval defect repaired in this paper.}
 \label{fig:siri_example}
 \end{figure*}
 
@@ -1456,8 +1720,10 @@ architectures on a software update question.
 
 Figure~\ref{fig:execution_trace} illustrates a representative execution
 of the proposed architecture on a software update question. The Query
-Rewriter Agent reformulates the user question to improve retrieval
-coverage, the Retriever Agent gathers evidence from software ecosystem
+Rewriter Agent reformulates the user question with the intention of widening
+retrieval coverage --- an intention Section~\ref{sec:localizing} shows is
+realized only when the reformulation augments the original question rather than
+replacing it --- the Retriever Agent gathers evidence from software ecosystem
 documents, and the Evaluator Agent assigns a retrieval quality score
 before answer generation. This example demonstrates how retrieval and
 evaluation are separated into specialized agents within the proposed
@@ -1465,10 +1731,11 @@ architecture.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{Figures/execution_trace.png}
+\includegraphics[width=\columnwidth]{Figures/execution-trace.png}
 \caption{
 Example execution trace of the Query Rewriter, Retriever, and Evaluator agents.
 }
+\Description{Screenshot of a console execution trace showing each agent's output in turn: the Query Rewriter's reformulation of the user question, the Retriever's endpoint calls and the documents returned, and the Evaluator's numeric retrieval quality score, followed by the generated answer with its cited sources.}
 \label{fig:execution_trace}
 \end{figure}
 \subsection{Adaptive Feedback}
@@ -1479,6 +1746,14 @@ Orchestrator executed an additional retrieval cycle using a revised
 query generated by the Query Rewriter. This behavior occurred without
 manual intervention during evaluation and allowed retrieval to continue
 when the initial result set was insufficient.
+
+We do not report a retry rate or an effect of retrying on retrieval quality;
+neither was instrumented, and both should be. The mechanism also interacts with
+the defect of Section~\ref{sec:localizing} in a way worth stating: before the
+remedy, a retry re-issued a second rewritten query in place of the user's
+question, so an insufficient result set was retried with the same substitution
+that caused it. Under the union acquisition of
+Section~\ref{sec:union-fetch} the retry inherits both phrasings.
 
 \subsection{Self-Improvement Behavior}
 
@@ -1497,7 +1772,7 @@ reported here is not established.
 
 A paired $t$-test comparing the first and last tertiles yielded
 $t(16)=2.18$ and $p=0.043$ (two-tailed). The corresponding effect size
-was Cohen's $d=0.83$ \cite{cohen1960coefficient}.
+was Cohen's $d=0.83$ \cite{cohen1988power}.
 
 During evaluation, 27 query-expansion terms accumulated positive scores
 in the Self-Improvement Memory. Table~\ref{tab:learned_terms} lists the
@@ -1637,8 +1912,12 @@ Table~\ref{tab:examples}.
 \subsection{Implementation Comparison}
 
 The architecture was implemented using Pure Python, LangChain, and
-smolagents. All three implementations produced equivalent retrieval
-results on the evaluation dataset.
+smolagents. The three implementations were observed to return the same ranked
+documents on the evaluation dataset. We record this as an implementation
+observation rather than an equivalence result: it was checked by inspection of
+the retrieved sets, not by a metric, and this paper's own subject is that
+whether two systems are ``equivalent'' depends on which measure is applied
+(Section~\ref{sec:metric-threat}).
 
 The Pure Python implementation provided the most direct execution
 trace. LangChain exposed additional intermediate execution information
@@ -1694,7 +1973,7 @@ pipelines generally rather than of this system:
 The last point suggests a diagnostic worth generalizing. When an intervention
 improves the metric it targets while leaving the outcome metric unchanged, the
 intervention is likely addressing a real but secondary defect. In retrieval
-specifically, MRR improving while nDCG@$k$ and Recall@$k$ stay flat is the
+specifically, MRR improving while nDCG@$k$ stays flat is the
 signature of a candidate set that does not contain the answer, and it is
 distinguishable from a ranking problem only by inspecting the candidate set
 directly. We therefore instrumented the pipeline to expose its pre-rerank pool,
@@ -1705,8 +1984,9 @@ separable diagnoses rather than a single unexplained score.
 \label{sec:decomposition}
 
 With both defects repaired and the synthesis model held constant, the
-multi-agent architecture matches the single-agent baseline on retrieval quality
-and on faithfulness, at approximately twice the latency
+multi-agent architecture matches the single-agent baseline on retrieval quality,
+and --- once answer format is matched, in the \texttt{marag\_llm} arm --- on
+faithfulness, at approximately twice the latency
 (Section~\ref{sec:scaled-eval}). We report this as the result rather than
 searching for a configuration that reverses it.
 
@@ -1815,8 +2095,10 @@ symptom descriptions, community terminology, and information dispersed
 across multiple document sources. Consequently, retrieval quality
 becomes a central factor influencing answer quality.
 
-The results indicate that improvements in retrieval quality translate
-directly into improved answer supportability. When relevant release
+We expect improvements in retrieval quality to translate into improved answer
+supportability, though our evaluation does not test it: Section~\ref{sec:scaled-eval}
+finds retrieval parity coexisting with an apparent faithfulness gap that proved
+to be an artifact of answer format. When relevant release
 notes, advisories, and community discussions are successfully
 retrieved, the generated answer is more likely to contain verifiable
 evidence and less likely to rely on unsupported assumptions. This
@@ -1832,7 +2114,7 @@ forcing a categorical response. Future architectures should therefore
 consider retrieval confidence as a first-class component of answer
 generation.
 
-Six limitations of the current system warrant discussion.
+Seven limitations of the current system warrant discussion.
 
 \textbf{Data coverage lag.}
 Recent community posts may not yet be indexed in the data lake. In the
@@ -1866,12 +2148,63 @@ queries. Larger or domain-adapted models may improve synthesis quality,
 particularly for questions requiring extensive contextual reasoning.
 
 \textbf{Evaluation scope and generalization.}
-The evaluation consists of 50 software update questions spanning five
-categories. Although diverse, this remains a relatively small sample
-compared with real-world workloads. Additionally, all evaluation
+The largest evaluation reported here is 100 questions spanning five categories
+and 21 software ecosystems; the diagnostic measurements that localize the defect
+rest on 10 questions, and the superseded bespoke score on 50. Although diverse,
+all of these remain small samples compared with real-world workloads. Additionally, all evaluation
 questions are English-language. Generalization to larger datasets,
 additional languages, and different software ecosystems remains an
 open question.
+
+The 10-question measurements carry the paper's inversion claim, so we are
+specific about what they support. The inversion itself survives exact paired
+testing (Section~\ref{sec:two-metrics}): the baseline wins every non-tied
+question, and the two-sided $p$ of $0.016$ is the smallest value attainable
+with seven nonzero pairs, which means the design is at its resolution limit
+rather than comfortably inside it. What ten questions cannot deliver is a
+magnitude: the bootstrap interval on the nDCG@3 deficit spans $[-0.865,
+-0.348]$, so the point estimate of $-0.620$ should not be read as an
+effect-size estimate, and the smaller within-panel contrasts of
+Table~\ref{tab:ranking-ablation} --- notably the 0.024 between ranking against
+the rewrite and against the original question --- are not resolvable at this
+$n$ at all. We report them as observations rather than findings. The claim that
+does not rest on an interval estimate is the document count: 22 of 23 relevant
+documents missing is a census of the retrieved sets, not a sample statistic,
+and its scaled counterpart (19 of 158) was computed on 100 questions.
+
+\textbf{LLM relevance judge.}
+All relevance judgments reported here were produced by \texttt{llama3.1}, which
+is also the synthesis model for all three arms. The judge and the generator are
+therefore the same model, which is the circularity condition the IR literature
+warns about, and we did not measure agreement between this judge and human
+assessors on our corpus. Three consequences follow, and we state them at the
+strength the evidence supports. First, published agreement figures suggest our
+labels are usable for \emph{ordering} systems and weak for anything requiring
+per-item correctness: run-level Kendall's $\tau$ of 0.77 to
+0.94~\cite{upadhyay2024umbrela,thomas2024preferences} against per-label
+$\kappa$ near 0.26 to 0.37~\cite{upadhyay2024umbrela,faggioli2023perspectives}.
+The claims we draw from these labels are ordering claims and document counts,
+not calibrated effectiveness estimates. Second, LLM judges over-label
+relevance~\cite{alaofi2024fooled}, which inflates the denominator of the
+census in Section~\ref{sec:localizing}: if some of the 23 documents the baseline
+retrieved are not truly relevant, the true count of missed relevant documents is
+smaller than 22, though the direction of the finding is unaffected because those
+documents were absent from the multi-agent candidate pool regardless of their
+label. Third, LLM qrels carry less discriminative power than human ones ---
+Faggioli et al.\ separate 65\% of run pairs under MAP where human judgments
+separate 72\%~\cite{faggioli2023perspectives} --- so the significance reported
+in Section~\ref{sec:two-metrics} was obtained under a handicap rather than
+assisted by one.
+
+We took one mitigation and omit two. The answer-quality finding was re-judged by
+a second, different-family model (\texttt{qwen2.5:7b-instruct}) on 40 questions,
+and the format effect held at $+0.107$ versus $+0.111$, significant under both
+judges; that check is reported with the artifacts. The retrieval judgments were
+not re-scored by a second judge, and no human-assessor sample was drawn. Both
+are the obvious next steps, together with the adversarial ``gullibility''
+screening --- checking whether the judge can be fooled by query-string
+injection --- that Alaofi et al.\ show is not predicted by $\kappa$ and must be
+tested separately~\cite{alaofi2024fooled}.
 
 \textbf{Statistical impact.}
 The 17.2\% improvement on the bespoke score is statistically significant
@@ -1896,9 +2229,12 @@ a control point for retry and confidence estimation. This is
 particularly important for version-specific questions, where returning
 an explicit ``no matching source'' response may be preferable to
 generating unsupported information. The ability to reject unsupported
-answers is an important property for software maintenance applications,
-where incorrect information may directly impact
-decisions.
+answers is an important property for software maintenance applications, where
+incorrect information may directly impact decisions. We argue for it rather than
+demonstrate it: as Section~\ref{sec:decomposition} notes, our ground-truth
+coverage is too small for the abstention-versus-error asymmetry to be measured,
+even though the CRAG-style scoring implemented in the harness is designed to
+reward exactly that.
 
 Presenting retrieved evidence alongside generated answers improves
 answer provenance and supports auditing when errors occur. This is
@@ -1940,7 +2276,7 @@ synthesis process as the proposed system, isolating the effect of
 architectural decomposition, adaptive feedback, and persistent memory.
 Implementation details such as alias coverage, endpoint freshness,
 query rewriting quality, and retrieval configuration may still
-influence measured improvements.
+influence the measured comparison.
 
 \textbf{External validity.}
 The evaluation focuses on English-language software update questions
@@ -1973,9 +2309,9 @@ embedding-based vendor matching, and adaptive threshold selection \cite{asai2024
 
 Additional studies should examine retrieval adaptation across longer
 interaction histories and larger workloads to better understand the
-stability of the observed retrieval improvements. Evaluations involving
-multiple software ecosystems would also help determine whether the
-observed benefits generalize beyond the current data sources \cite{reuter2025}.
+stability of the observed retrieval-level adaptation. Evaluations involving
+multiple software ecosystems would also help determine whether retrieval parity
+holds beyond the current data sources \cite{reuter2025}.
 
 Finally, future work should investigate stronger validation mechanisms
 for community-derived information, including agreement analysis across
@@ -2003,9 +2339,8 @@ can promote a document that was never a candidate.
 
 Issuing both phrasings and unioning the candidate pools resolves it. On a
 100-question benchmark spanning 24 software ecosystems, the fetch-time loss
-falls from 96\% to 14.7\%, and the repaired pipeline reaches nDCG@3 of 0.865
-against the baseline's 0.869 --- parity, within overlapping confidence
-intervals, at approximately twice the latency. We report this rather than the
+falls from 96\% to 12\%, and the repaired pipeline reaches nDCG@3 of 0.859
+against the baseline's 0.863 --- parity, at approximately twice the latency. We report this rather than the
 improvement our original metric showed. On this benchmark, in this domain,
 architectural decomposition did not improve retrieval quality over a
 well-configured single-agent baseline; what the original evaluation measured was
@@ -2165,6 +2500,11 @@ Y. Zheng et al., ``SkillRouter: Skill Routing for LLM Agents at Scale
 
 \bibitem{zhuge2024}
 M. Zhuge et al., ``Agent-as-a-Judge: Evaluate Agents with Agents,'' \textit{arXiv preprint https://arxiv.org/abs/2410.10934}, 2024.
+
+\bibitem{cohen1988power}
+J. Cohen,
+\textit{Statistical Power Analysis for the Behavioral Sciences}, 2nd ed.,
+Lawrence Erlbaum Associates, 1988.
 
 \bibitem{cohen1960coefficient}
 J. Cohen,
@@ -2426,6 +2766,44 @@ A. Panickssery, S. R. Bowman, and S. Feng,
 ``LLM Evaluators Recognize and Favor Their Own Generations,''
 \textit{Advances in Neural Information Processing Systems},
 vol. 37, pp. 68772--68802, 2024.
+
+\bibitem{upadhyay2024umbrela}
+S. Upadhyay, R. Pradeep, N. Thakur, N. Craswell, and J. Lin,
+``UMBRELA: UMbrela is the (Open-Source Reproduction of the) Bing RELevance
+Assessor,''
+\textit{arXiv preprint https://arxiv.org/abs/2406.06519}, 2024.
+
+\bibitem{thomas2024preferences}
+P. Thomas, S. Spielman, N. Craswell, and B. Mitra,
+``Large Language Models Can Accurately Predict Searcher Preferences,''
+\textit{arXiv preprint https://arxiv.org/abs/2309.10621}, 2024.
+
+\bibitem{faggioli2023perspectives}
+G. Faggioli, L. Dietz, C. Clarke, G. Demartini, M. Hagen, C. Hauff, N. Kando,
+E. Kanoulas, M. Potthast, B. Stein, and H. Wachsmuth,
+``Perspectives on Large Language Models for Relevance Judgment,''
+\textit{Proceedings of the 2023 ACM SIGIR International Conference on Theory of
+Information Retrieval},
+pp. 39--50, 2023.
+
+\bibitem{clarke2024cannot}
+C. L. A. Clarke and L. Dietz,
+``LLM-Based Relevance Assessment Still Can't Replace Human Relevance
+Assessment,''
+\textit{arXiv preprint https://arxiv.org/abs/2412.17156}, 2024.
+
+\bibitem{alaofi2024fooled}
+M. Alaofi, P. Thomas, F. Scholer, and M. Sanderson,
+``LLMs Can Be Fooled into Labelling a Document as Relevant,''
+\textit{Proceedings of the 2024 Annual International ACM SIGIR Conference on
+Research and Development in Information Retrieval in the Asia Pacific Region},
+2024.
+
+\bibitem{soboroff2025dontuse}
+I. Soboroff,
+``Don't Use LLMs to Make Relevance Judgments,''
+\textit{Information Retrieval Research},
+vol. 1, no. 1, pp. 29--46, 2025.
 
 \bibitem{rajpurkar2018squad2}
 P. Rajpurkar, R. Jia, and P. Liang,

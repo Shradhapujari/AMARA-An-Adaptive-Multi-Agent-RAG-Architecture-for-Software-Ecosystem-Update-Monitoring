@@ -36,6 +36,7 @@ Usage
 -----
     MARAG_CORPUS=record:data/corpus_snapshot   # pass 1: populate from live
     MARAG_CORPUS=replay:data/corpus_snapshot   # passes 2..n: serve from disk
+    MARAG_CORPUS=strict:data/corpus_snapshot   # same, but a document miss is fatal
 
 Record once, then run every arm against `replay`. The arms then see byte-
 identical sources.
@@ -47,6 +48,15 @@ counted. A hard failure would be worse than useless here: arms legitimately
 make calls the recording pass never made — the embedding arm calls Ollama's
 embeddings endpoint and the `none` arm never does — and killing the run for
 that would make the ablation unrunnable.
+
+`strict` is `replay` for everyone except the document sources: a miss on a
+corpus host raises `CorpusMiss` instead of going live, while model calls to
+localhost still pass through exactly as under `replay`. That keeps the reason
+replay is lenient — arms make different model calls — while removing the
+failure mode it allows, where two arms of the same experiment quietly read
+different documents. Use it for runs whose numbers have to be re-derivable:
+record once, then run every arm under `strict:<dir>` and a run that would have
+drifted stops instead of reporting.
 
 What matters is that misses are *visible*, so `stats()` reports them broken
 down by host and the harness writes them into `config.json`. A run whose
@@ -68,6 +78,16 @@ import urllib.request
 from typing import Dict, Optional
 
 ENV_VAR = "MARAG_CORPUS"
+
+
+class CorpusMiss(RuntimeError):
+    """
+    A `strict` replay needed a document the snapshot does not hold.
+
+    Raised only for corpus hosts. `replay` keeps its lenient behaviour; this is
+    for the runs whose numbers have to be re-derivable later, where a document
+    fetched live is a silent difference between arms rather than a convenience.
+    """
 
 
 class RecordedFailure(Exception):
@@ -184,8 +204,9 @@ class Snapshot:
     """Record/replay layer over the two HTTP entry points the project uses."""
 
     def __init__(self, mode: str, directory: str):
-        if mode not in ("record", "replay"):
-            raise ValueError(f"corpus mode must be record|replay, got {mode!r}")
+        if mode not in ("record", "replay", "strict"):
+            raise ValueError(
+                f"corpus mode must be record|replay|strict, got {mode!r}")
         self.mode = mode
         self.dir = directory
         self.hits = 0
@@ -250,6 +271,16 @@ class Snapshot:
         """Re-raise a recorded failure. Callers already guard every fetch."""
         raise RecordedFailure(rec.get("error", "recorded failure"))
 
+    def _on_miss(self, url: str) -> None:
+        """Count the miss, and under `strict` refuse to substitute a live read."""
+        self._note_miss(url)
+        if self.mode == "strict" and is_corpus_host(url):
+            raise CorpusMiss(
+                f"strict replay: {url} is not in the snapshot at {self.dir!r}. "
+                f"Fetching it live would give this arm a document the others "
+                f"did not see. Re-record the snapshot, or use replay: to allow "
+                f"live reads and accept that the run is not frozen.")
+
     def _note_miss(self, url: str) -> None:
         self.misses += 1
         host = (urllib.parse.urlparse(url).hostname or "?").lower()
@@ -260,7 +291,7 @@ class Snapshot:
     def _get(self, url, **kw):
         """Replacement for `requests.get`."""
         key = request_key("GET", url, kw.get("params"))
-        if self.mode == "replay":
+        if self.mode in ("replay", "strict"):
             rec = self._load(key)
             if rec is not None:
                 self.hits += 1
@@ -268,7 +299,7 @@ class Snapshot:
                     self._replay_failure(rec)
                 return ReplayedResponse(rec["status"], self._body(rec),
                                         rec.get("headers"), url)
-            self._note_miss(url)
+            self._on_miss(url)
         try:
             resp = self._real_requests_get(url, **kw)
         except Exception as e:  # noqa: BLE001 — a failure is an observation too
@@ -292,7 +323,7 @@ class Snapshot:
             url, method, body, headers = str(req), "GET", b"", {}
         key = request_key(method, url, None, body)
 
-        if self.mode == "replay":
+        if self.mode in ("replay", "strict"):
             rec = self._load(key)
             if rec is not None:
                 self.hits += 1
@@ -300,7 +331,7 @@ class Snapshot:
                     self._replay_failure(rec)
                 return ReplayedUrlResponse(rec["status"], self._body(rec),
                                            rec.get("headers"))
-            self._note_miss(url)
+            self._on_miss(url)
 
         try:
             resp = self._real_urlopen(req, *a, **kw)
@@ -366,12 +397,15 @@ class Snapshot:
             "recorded": self.recorded,
             "misses_by_host": dict(sorted(self.miss_urls.items())),
             "corpus_misses": sum(corpus_misses.values()),
-            "frozen": self.mode == "replay" and not corpus_misses,
+            # `strict` cannot finish with a corpus miss -- the run raises -- so a
+            # strict run that reached stats() is frozen by construction.
+            "frozen": self.mode in ("replay", "strict") and not corpus_misses,
+            "strict": self.mode == "strict",
         }
 
 
 def activate(spec: Optional[str] = None) -> Optional[Snapshot]:
-    """Build and start a snapshot from a `record:<dir>` / `replay:<dir>` spec.
+    """Build and start a snapshot from a `record:` / `replay:` / `strict:` spec.
 
     Returns None when no spec is set, which is the ordinary live behaviour —
     the harness must run unchanged for anyone who does not want a snapshot.
@@ -382,6 +416,7 @@ def activate(spec: Optional[str] = None) -> Optional[Snapshot]:
         return None
     if ":" not in spec:
         raise ValueError(
-            f"{ENV_VAR} must look like record:<dir> or replay:<dir>, got {spec!r}")
+            f"{ENV_VAR} must look like record:<dir>, replay:<dir> or "
+            f"strict:<dir>, got {spec!r}")
     mode, directory = spec.split(":", 1)
     return Snapshot(mode.strip().lower(), directory.strip()).start()

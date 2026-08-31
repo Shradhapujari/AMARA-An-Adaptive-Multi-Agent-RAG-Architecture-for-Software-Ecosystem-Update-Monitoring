@@ -247,3 +247,56 @@ def test_an_incomplete_question_is_redone_without_losing_other_arms(harness):
     # Question 2 is incomplete for a/b, so its "a" row goes; "z" is untouched.
     assert (2, "a") not in kept_keys
     assert (2, "z") in kept_keys and (1, "z") in kept_keys
+
+
+# ── CLI wiring ───────────────────────────────────────────────────────────
+
+def test_every_cli_flag_reaches_the_config(monkeypatch):
+    """
+    Regression for a silently dead flag: --resume was parsed and never assigned
+    to the config, so `--resume <dir>` started a fresh run and the user only
+    found out by reading the run id in the log.
+
+    Rather than pin one flag, this asserts the general property: every argparse
+    destination that names a config field must actually arrive there.
+    """
+    from eval_harness.config import EvalConfig
+
+    argv = ["run_eval",
+            "--dataset", "data/x.json",
+            "--limit", "7",
+            "--generators", "marag",
+            "--judge", "ollama:mistral",
+            "--top-k", "3",
+            "--seed", "9",
+            "--resume", "run_abc_def",
+            "--stratify", "category,ecosystem"]
+    monkeypatch.setattr(sys, "argv", argv)
+    cfg = R._parse_args()
+
+    fields = set(vars(EvalConfig()))
+    parsed = {"dataset": "data/x.json", "limit": 7, "judge": "ollama:mistral",
+              "top_k": 3, "seed": 9, "resume": "run_abc_def",
+              "stratify": "category,ecosystem"}
+    for name, expected in parsed.items():
+        assert name in fields, f"{name} is not a config field"
+        assert getattr(cfg, name) == expected, f"--{name} never reached the config"
+    assert cfg.generators == ["marag"]
+
+
+def test_a_strict_corpus_miss_stops_the_run_rather_than_becoming_an_error_row(harness):
+    """
+    run_eval turns a generator exception into an "[system error: ...]" row so one
+    broken system cannot kill a long run. CorpusMiss must not be absorbed that
+    way: a strict run exists precisely so that a missing document stops the run
+    instead of being reported as a result.
+    """
+    import corpus_snapshot
+
+    class Exploding(StubGen):
+        def generate(self, query):
+            raise corpus_snapshot.CorpusMiss("doc not in snapshot")
+
+    harness.install([Exploding("a")])
+    with pytest.raises(corpus_snapshot.CorpusMiss):
+        R.run(harness.cfg())
