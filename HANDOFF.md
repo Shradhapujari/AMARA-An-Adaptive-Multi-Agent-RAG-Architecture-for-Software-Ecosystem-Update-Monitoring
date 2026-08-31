@@ -8,6 +8,68 @@ Last updated: 2026-08-30. Branch: `feat/llm-source-full`.
 
 ---
 
+## The paper is the active work
+
+**Deadline: 1 September 2026** — TOSEM special section on Human-AI Collaboration
+in Software Engineering, journal-first / fast-impact track, up to 45 pages.
+Submit at <https://mc.manuscriptcentral.com/tosem>, submission type "Human AI
+Collaboration in Software Engineering".
+
+Source: **`paper/tosem_amara.tex`** (derived from `~/Downloads/paper_7.tex`, the
+AgenticSE '26 conference version, retargeted to `acmsmall`). ~14,700 words,
+about 21 pages. **There is no local LaTeX toolchain** — the file is lint-clean
+(balanced environments, no dangling refs, 70 citations all resolving, tables
+column-consistent) but has never been typeset. Compile on Overleaf before
+submitting; `~/Downloads/tosem-overleaf/` suggests that is the existing workflow.
+
+The paper is reframed around a negative result plus remedy. Section by section:
+introduction and abstract state the finding; §2 positions it against prior work
+on expansion drift; §3 documents the retrieval design; §4 reports the evidence
+chain; §5 and §6 argue what generalizes. Fragments used to build it
+(`paper/frag_*.tex`) are kept for reference and are already spliced in — do not
+splice them twice.
+
+### Before submitting
+
+1. **Compile it.** Never typeset. Expect the usual first-compile fixes.
+2. **Voice.** §4's older subsections (Answer Accuracy, Representative Questions,
+   Failure Analysis, Implementation Comparison, Qualitative Analysis) are
+   conference-version prose. They no longer contradict anything, but they read
+   unevenly against the rewritten sections.
+3. **Journal-first eligibility.** Confirm the AgenticSE '26 workshop proceedings
+   status satisfies TOSEM's journal-first rules.
+4. **No head-to-head baseline was run.** §2 defends the omission (Self-RAG needs
+   a static Contriever/Wikipedia index; CRAG needs a fine-tuned T5-large
+   evaluator plus per-dataset thresholds). A reviewer may still press. RAGLAB
+   ships `selfrag_llama3-8B` and would be the cheapest way to answer it.
+
+### Numbers currently in the paper
+
+| Claim | Value | Source |
+|---|---|---|
+| Bespoke retrieval score | 0.680 → 0.798 (+17.2%, *p*=0.020) | conference version, n=50 |
+| Standard IR metrics, same systems | marag nDCG@3 0.145 vs baseline 0.765 | n=10 |
+| Fetch-time loss, before fix | 22 of 23 relevant documents never retrieved | n=10 |
+| Ranking ablation | none 0.145 / bm25 0.212 / embed 0.188 | n=10 |
+| Union fetch | nDCG@3 0.973, MRR 1.000 | n=10 |
+| Scaled evaluation | marag 0.865 [0.80,0.92] vs baseline 0.869 [0.81,0.92] | n=96 |
+| Fetch-time loss, after fix | 14.7% (23 of 156) | n=96 |
+| Faithfulness, format confound | template 0.702, prose 0.924, baseline 0.929 | n=96 |
+| Latency | 19.6 s vs 9.5 s median | n=96 |
+
+The n=96 numbers come from `results/run_1788139377_6a8e9993db65`. That run
+stopped at question 98 of 100 without writing `report.md`; the aggregates were
+computed directly from `per_query.jsonl`. `--resume` on that run id would
+finish it and produce the official artifact.
+
+**Caveat carried in the paper:** the 9.3% self-improvement figure compares
+time-ordered tertiles against a live corpus that drifts during a run, so
+adaptation is not separable from drift. Reported as mechanism-sound,
+magnitude-unestablished. Fixing it needs a frozen snapshot (`MARAG_CORPUS=record:<dir>`
+then `replay:<dir>`) or an interleaved design.
+
+---
+
 ## Environment
 
 There is no committed virtualenv. Recreate:
