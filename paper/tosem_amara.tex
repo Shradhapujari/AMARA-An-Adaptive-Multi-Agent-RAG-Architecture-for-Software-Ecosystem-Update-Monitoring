@@ -488,7 +488,16 @@ full automation, and decline to endorse the fully automated
 endpoint~\cite{faggioli2023perspectives}; Soboroff argues the stronger position
 that whatever generates the qrels also defines the ceiling, so a system better
 than the judge cannot be measured as
-such~\cite{soboroff2025dontuse}.
+such~\cite{soboroff2025dontuse}. He also names the condition under which that
+objection lapses, and it is the one pooling supplies: judgments gathered from
+many systems carry more relevance information than any single system, so ``we
+can measure any individual systems with less information about relevance than
+the collective pool''~\cite{soboroff2025dontuse}. The concession is guarded ---
+he requires the privilege to be explicit, a judge fine-tuned on manual
+judgments for the evaluation topics being his example, and warns against
+assuming it from training data one cannot inspect --- but pooling across
+systems is the form of it obtainable without human assessors, which is why
+every judgment reported here is pooled rather than collected per system.
 
 Circularity is the specific form of this problem that a multi-agent pipeline
 invites, and its cost has been simulated. Clarke and Dietz re-ranked all 75 runs
