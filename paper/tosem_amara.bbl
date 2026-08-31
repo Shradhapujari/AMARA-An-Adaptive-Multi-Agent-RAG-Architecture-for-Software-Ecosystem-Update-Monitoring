@@ -2,7 +2,7 @@
 %%% Do NOT edit. File created by BibTeX with style
 %%% ACM-Reference-Format-Journals [18-Jan-2012].
 
-\begin{thebibliography}{122}
+\begin{thebibliography}{123}
 
 %%% ====================================================================
 %%% NOTE TO THE USER: you can override these defaults by providing
@@ -1714,6 +1714,18 @@ Retrieved August 2026 from \tempurl}
   \bibinfo{booktitle}{\emph{Proceedings of the 42nd International Conference on
   Machine Learning ({ICML})}}.
 \newblock
+
+
+\bibitem[Zighelnic and Kurland(2008)]%
+        {zighelnic2008drift}
+\bibfield{author}{\bibinfo{person}{L. Zighelnic} {and} \bibinfo{person}{O.
+  Kurland}.} \bibinfo{year}{2008}\natexlab{}.
+\newblock \showarticletitle{Query-Drift Prevention for Robust Query Expansion}.
+  In \bibinfo{booktitle}{\emph{Proceedings of the 31st Annual International
+  {ACM} {SIGIR} Conference on Research and Development in Information
+  Retrieval}}. \bibinfo{pages}{825--826}.
+\newblock
+\href{https://doi.org/10.1145/1390334.1390524}{doi:\nolinkurl{10.1145/1390334.1390524}}
 
 
 \bibitem[Zobel(1998)]%

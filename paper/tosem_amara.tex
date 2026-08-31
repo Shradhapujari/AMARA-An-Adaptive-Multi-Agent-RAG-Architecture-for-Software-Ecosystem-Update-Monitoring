@@ -106,9 +106,14 @@ ecosystems it reduces the share of the baseline's relevant documents missing
 from the candidate pool from 96\% to 12\%.
 
 We draw four conclusions for practitioners building agentic software
-engineering tools. First, query rewriting must augment retrieval rather than
-substitute for it; the distinction is invisible in aggregate scores and decisive
-in the retrieved set. Second, a bespoke retrieval-quality metric can invert the
+engineering tools. First, that query rewriting must augment retrieval rather than
+substitute for it is already known --- it is reported in the query-rewriting
+literature and the fuse-the-result-lists remedy dates to 2008 --- yet a deployed
+pipeline can violate it while every component behaves correctly and the metric
+its designers watch moves the right way. What we add is how to detect that: count
+the relevant documents that never entered the candidate pool, and read a rising
+MRR under stronger rerankers with a flat nDCG as the signature of a fetch fault
+rather than a ranking one. Second, a bespoke retrieval-quality metric can invert the
 ordering that standard IR metrics produce, so architectural claims resting on
 one are not safe. Third, an apparent 0.23 faithfulness deficit for the
 multi-agent system proved to be an artifact of answer \emph{format} --- a
@@ -195,9 +200,8 @@ same corpus, and the same retrieved documents.
 
 Metric disagreements of this size usually indicate that one metric is measuring
 something other than what it claims. That was true here, but not in the
-direction we assumed. Investigating the gap produced this paper's central
-finding, which we state plainly because it is the part that transfers to other
-systems:
+direction we assumed. Investigating the gap produced the diagnosis this paper is
+built around:
 
 \begin{quote}
 \emph{The query-rewriting agent's output replaced the user's wording at every
@@ -210,7 +214,21 @@ The rewritten query was not retrieving the wrong documents from a correct
 candidate set --- a ranking problem, which is how we first read the evidence and
 how the vocabulary-mismatch framing in the literature invites one to read it.
 It was constructing a different, smaller candidate set from which the answer was
-largely absent. We confirmed the distinction by fixing ranking first: three
+largely absent.
+
+That substitution harms retrieval is not a new result, and we want to be exact
+about what is ours. It is documented in the query-rewriting literature this
+paper itself cites: query2doc reports that retrieving with the generated text
+alone scores below not rewriting at all and recovers the loss by concatenating
+the original query~\cite{wang2023query2doc}, DMQR-RAG retrieves with the original
+alongside its rewrites and merges the results~\cite{gao2024dmqr}, and both the
+fuse-the-result-lists remedy and the argument that re-ranking cannot recover what
+a query never retrieved were published in 2008~\cite{zighelnic2008drift}. The
+contribution here is not that finding, nor the remedy. It is that a system can
+exhibit this defect in deployment while every component behaves correctly and the
+metric its designers watch moves the right way --- and a procedure for detecting
+that, which we arrived at only after building two rerankers on the wrong
+diagnosis. We confirmed the distinction by fixing ranking first: three
 successively stronger rerankers scored against the user's original question
 raised MRR monotonically from 0.250 to 0.500 to 0.625, while nDCG@3 stayed near
 0.19. A ranking fix that cannot close a ranking gap is evidence that the
@@ -221,12 +239,27 @@ rewritten phrasing and unioning the candidate pools moves nDCG@3 from 0.188 to
 \subsection{Contributions}
 
 \begin{itemize}
-  \item \textbf{A failure mode in agentic query rewriting, measured and
-  localized.} Rewriting that substitutes for the user's query rather than
-  extending it loses relevant documents at the retrieval step. We quantify the
-  loss by counting documents rather than inferring it from scores, show that it
-  is not recoverable by reranking, and give a remedy that costs one additional
-  set of retrieval calls (Sections~\ref{sec:results} and~\ref{sec:discussion}).
+  \item \textbf{A method for diagnosing where a retrieval pipeline loses
+  documents.} That substituting a rewritten query for the user's own hurts
+  retrieval is established: query2doc reports that retrieving with the generated
+  text alone scores below not rewriting at all, and recovers the loss by
+  concatenating the original~\cite{wang2023query2doc}; DMQR-RAG retrieves with
+  the original alongside its rewrites and merges the
+  results~\cite{gao2024dmqr}; and the fuse-the-two-result-lists remedy, together
+  with the argument that a re-ranker confined to one query's results cannot
+  recover what that query never retrieved, dates to
+  2008~\cite{zighelnic2008drift}. We claim neither the finding nor the fix.
+
+  What we contribute is how the defect was \emph{located}. In a deployed
+  multi-agent pipeline the substitution is a wiring property, invisible in every
+  component's own output and in the aggregate score the designers were watching.
+  We localize it by counting the relevant documents that never entered the
+  candidate pool rather than by reading scores, and we identify a signature that
+  distinguishes this fault from a ranking fault: MRR rising monotonically under
+  successively stronger rerankers while nDCG@$k$ stays flat
+  (Section~\ref{sec:localizing}). That signature is what told us the prior work
+  above applied to our system, after two of the three rerankers had already been
+  built on the wrong diagnosis.
 
   \item \textbf{Evidence that a domain-specific retrieval metric can invert the
   conclusion.} The same architecture, questions, and documents yield opposite
