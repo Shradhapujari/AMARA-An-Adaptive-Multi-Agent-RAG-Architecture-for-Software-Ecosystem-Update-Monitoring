@@ -5,12 +5,11 @@
 %% samples/acmsmall-submission.tex.
 \documentclass[acmsmall,review,screen]{acmart}
 
+%% acmart already loads booktabs, graphicx, pifont and hyperref; re-loading them
+%% risks an option clash and counts as modifying the template.
 \usepackage{amsmath}
-\usepackage{booktabs}
-\usepackage{graphicx}
-\usepackage{hyperref}
 \usepackage{tikz}
-\usepackage{pifont}
+\usepackage{pifont}   %% acmart's own pifont load is conditional; \ding needs this
 
 \emergencystretch=3em
 
@@ -21,17 +20,21 @@
 \acmNumber{0}
 \acmArticle{0}
 \acmMonth{8}
+\copyrightyear{2027}
 \acmDOI{}
 
 \received{1 September 2026}
 
-\title{When Query Rewriting Loses the Documents: An Adaptive Multi-Agent RAG
-Architecture for Software Ecosystem Update Monitoring}
+\title[When Query Rewriting Loses the Documents]{When Query Rewriting Loses the
+Documents: An Adaptive Multi-Agent RAG Architecture for Software Ecosystem
+Update Monitoring}
 
 % Conference version title, retained for reference:
 % \title{An Adaptive Multi-Agent RAG Architecture for Software Ecosystem Update Monitoring}
 
 \author{Shradha Devendra Pujari}
+%% TODO before camera-ready: add the author's real ORCID.
+%% \orcid{0000-0000-0000-0000}
 \affiliation{%
   \institution{University of the Pacific}
   \department{Department of Computer Science}
@@ -41,6 +44,8 @@ Architecture for Software Ecosystem Update Monitoring}
 \email{s_pujari@u.pacific.edu}
 
 \author{Solomon Berhe}
+%% TODO before camera-ready: add the author's real ORCID.
+%% \orcid{0000-0000-0000-0000}
 \affiliation{%
   \institution{University of the Pacific}
   \department{Department of Computer Science}
@@ -433,19 +438,25 @@ index to make it. It is a reimplementation and not a reproduction: neither
 published checkpoint is involved, so it can never settle how those systems
 perform, only how their mechanisms behave over these sources.
 
-Completing that evaluation carries a condition worth stating in advance, because
-it is easy to violate by default. The arm's relevance critique discards a
-document when it judges it irrelevant, and in the configuration released here
-that critique runs the same model that supplies our relevance judgments. Scoring
-the arm with that judge would be the circular arrangement of
-Section~\ref{sec:related}: an assessor filtering the candidates it will then
-grade, which Clarke and Dietz measured collapsing agreement with human judgments
-from $\tau \approx 0.84$ to 0.38 at rank~10~\cite{clarke2024cannot}. The arm
-would score well by construction rather than by retrieving better. Whoever
-finishes the run should therefore judge it with a model independent of its
-critic. The harness records each critique decision, so the number of documents
-the critic removed is recoverable per query and the inflation can be bounded
-rather than assumed; because a hedged or negated critique keeps the document
+Completing that evaluation carries a condition worth stating in advance. In the
+configuration released here the arm's critiques run the same model that judges
+answers for scoring, and the critique loop decides both which documents the
+answer is drafted from and whether to answer at all. A judge scoring answers it
+helped shape is the self-preference case documented for LLM
+evaluators~\cite{panickssery2024self,zheng2023judge}, so the arm's
+\emph{answer-quality} numbers under such a judge would not be independent of it.
+Whoever finishes the run should score it with a model independent of the critic.
+
+The arm's \emph{retrieval} metrics are not exposed to this, by a deliberate
+choice in the harness worth recording because the opposite is the natural
+implementation: the arm reports the full retrieved list rather than the
+critique-filtered one, so nDCG and recall are computed over what it retrieved
+and not over what its critic approved. Scoring only the kept documents would
+flatter precision by hiding the discards, and would additionally make the
+retrieval numbers circular in the sense Clarke and Dietz
+measure~\cite{clarke2024cannot}. The harness records each critique decision, so
+the number of documents the critic withheld from drafting is recoverable per
+query; because a hedged or negated critique keeps the document
 (\texttt{SelfReflectiveRAG.is\_relevant} discards only on a non-negated
 \textsc{irrelevant} verdict, via \texttt{find\_verdict}), that count is a lower
 bound on the critic's filtering.
