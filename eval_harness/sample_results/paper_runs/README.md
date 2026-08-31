@@ -21,6 +21,14 @@ fresh clone.
 | `run_1788133873_237950e265eb` | Ablation panel (b), embedding cosine ranked against the original question. |
 | `run_1788139377_6a8e9993db65` | Table 4 and Table 5, the first 100-question stratified sample. |
 | `run_1788160859_67177cd53aab` | Table 6, the second 100-question selection. |
+| `run_1788172664_67177cd53aab` | Table 7, scaled ranking ablation, no reranking. Frozen replay of `corpus_snapshot_b100_p5`. |
+| `run_1788173743_67177cd53aab` | Table 7, scaled ranking ablation, Okapi BM25. |
+| `run_1788174490_67177cd53aab` | Table 7, scaled ranking ablation, embedding cosine. |
+
+The three Table 7 rows share one corpus snapshot, recorded by a preceding pass and
+then replayed with `corpus_misses = 0` and `frozen = true`, so the arms differ only
+in `MARAG_RERANK` and every arm sees byte-identical documents. That is what makes
+them strictly paired, which the ten-question ablation in Table 3 is not.
 
 ## Reading these honestly
 
