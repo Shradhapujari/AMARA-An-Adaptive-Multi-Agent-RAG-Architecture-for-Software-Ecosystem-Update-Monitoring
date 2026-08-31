@@ -64,6 +64,21 @@ This run stalled at question 98 and was later completed. Numbers reported in an
 earlier draft as n=96 were hand-computed from `per_query.jsonl` mid-run; the
 paper now uses the completed n=100 artifact.
 
+## Table 6 — the ground-truth sample
+
+All cells from `run_1788160859_67177cd53aab`, n=100, post-fix.
+
+- Dataset: `data/benchmark_100.json` (28 reference answers, selected to prefer
+  ground-truth records within each ecosystem-by-category cell)
+- Generators and reranker as above; judge `ollama:llama3.1`
+- This run shared the machine with other work, so its absolute latencies are
+  inflated; only the within-run ratio is meaningful.
+
+This is an independent sample of the same comparison. Its nominal ordering on
+retrieval, faithfulness and correctness is the reverse of Tables 4 and 5, with
+overlapping intervals throughout — which is the paper's evidence that no
+difference is being measured.
+
 ## Fetch-time loss
 
 Both figures are the same measurement: the share of the baseline's

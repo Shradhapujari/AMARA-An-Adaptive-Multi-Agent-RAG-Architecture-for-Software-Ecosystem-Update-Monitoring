@@ -16,11 +16,27 @@ Submit at <https://mc.manuscriptcentral.com/tosem>, submission type "Human AI
 Collaboration in Software Engineering".
 
 Source: **`paper/tosem_amara.tex`** (derived from `~/Downloads/paper_7.tex`, the
-AgenticSE '26 conference version, retargeted to `acmsmall`). ~14,700 words,
-about 21 pages. **There is no local LaTeX toolchain** — the file is lint-clean
-(balanced environments, no dangling refs, 70 citations all resolving, tables
-column-consistent) but has never been typeset. Compile on Overleaf before
-submitting; `~/Downloads/tosem-overleaf/` suggests that is the existing workflow.
+AgenticSE '26 conference version, retargeted to `acmsmall`).
+
+**It compiles.** `tectonic` is installed (`brew install tectonic` — a formula, so
+no sudo, unlike the BasicTeX cask). Build with:
+
+```bash
+tectonic -X compile paper/tosem_amara.tex
+```
+
+Current output: **33 pages** of the 45 permitted, zero undefined references or
+citations, two sub-visible overfull boxes (6pt and 11pt). Build products are
+gitignored.
+
+Do not trust a word-count estimate of the page count: 16,200 words came out as
+33 pages, not the ~23 a 700-words-per-page estimate predicted, because the
+tables, tikz figures and bibliography are not words.
+
+`paper/Figures/execution-trace.png` is committed so the source is
+self-contained. The original lives in `~/Downloads/tosem-overleaf/figures/` under
+a different name (`execution-trace` vs the `execution_trace` the tex referenced),
+which was a hard compile failure until fixed.
 
 The paper is reframed around a negative result plus remedy. Section by section:
 introduction and abstract state the finding; §2 positions it against prior work

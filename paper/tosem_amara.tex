@@ -1418,6 +1418,56 @@ single\_agent & 0.931 & 0.973 & 9.6 \\
 \end{tabular}
 \end{table}
 
+\subsubsection{A Second Sample, and Why It Matters}
+
+The 100-question subset above balances category and ecosystem without regard to
+reference answers, which as Section~\ref{sec:benchmark} explains leaves almost
+none. We therefore repeated the evaluation on a second 100-question selection
+that prefers ground-truth records within each grid cell, retaining 28. This
+permits an answer-correctness measurement, and it provides an independent sample
+of the architecture comparison.
+
+\begin{table}[t]
+\caption{The same three systems on a second 100-question selection, one that
+retains 28 reference answers. Values are mean $\pm$ 95\% CI; correctness is
+computed only where a reference answer exists, with $n$ given per arm. The
+nominal ordering on retrieval is the reverse of
+Table~\ref{tab:scaled-retrieval}.}
+\label{tab:gt-run}
+\begin{tabular}{lrrrr}
+\toprule
+System & nDCG@3 & Faithfulness & Correctness & Latency (s) \\
+\midrule
+marag         & 0.781 $\pm$ 0.072 & 0.722 $\pm$ 0.039 & 0.296 ($n=26$) & 37.5 \\
+marag\_llm    & 0.781 $\pm$ 0.072 & 0.938 $\pm$ 0.030 & 0.367 ($n=24$) & 29.2 \\
+single\_agent & 0.768 $\pm$ 0.075 & 0.917 $\pm$ 0.034 & 0.326 ($n=27$) & 10.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:gt-run} is the most useful evidence in this section, for a reason
+that has nothing to do with which system is ahead. On this sample the
+multi-agent arm is nominally ahead on retrieval (0.781 versus 0.768), on
+faithfulness once format is matched (0.938 versus 0.917), and on correctness
+(0.367 versus 0.326). On the sample of Table~\ref{tab:scaled-retrieval} it was
+nominally behind on all of them. Every one of these differences sits inside
+overlapping confidence intervals in both runs. Two independent 100-question
+samples that disagree about the direction of the difference are stronger
+evidence that no difference is being measured than either sample is on its own,
+and we read the pair that way rather than selecting the favourable one.
+
+Three further observations. First, correctness is low for every arm --- between
+0.30 and 0.37 --- so on version-specific questions with a checkable answer, all
+three systems are wrong more often than right; retrieval parity should not be
+mistaken for adequacy. Second, the correctness sample sizes differ across arms
+(24 to 27) because an arm that abstains on a question yields no scoreable
+prediction, which is itself informative and is why the CRAG-style scoring treats
+abstention and error asymmetrically. Third, latency is not comparable between
+the two tables: this run shared the machine with other work, so its absolute
+figures are inflated. The within-run ratio --- roughly three times the
+baseline's median here, twice it in Table~\ref{tab:scaled-answer} --- is the
+quantity to read.
+
 Table~\ref{tab:scaled-answer} carries a methodological result worth stating
 separately. Comparing \texttt{marag} against \texttt{single\_agent} on
 faithfulness suggests a substantial deficit (0.700 versus 0.931). Comparing
