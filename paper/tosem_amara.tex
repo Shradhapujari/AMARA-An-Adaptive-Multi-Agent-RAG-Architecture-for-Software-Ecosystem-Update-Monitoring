@@ -1386,8 +1386,13 @@ which isolates architecture from model:
 
 \begin{table}[t]
 \caption{Retrieval quality on the 100-question stratified benchmark subset
-($n=100$), pooled graded relevance, judge \texttt{llama3.1}. The two retrieval
-arms are identical by construction; they differ only in answer synthesis.}
+($n=100$), pooled graded relevance, judge \texttt{llama3.1}. The two
+multi-agent arms are configured identically and differ only in answer synthesis;
+each nonetheless performs its own retrieval against live sources, and their
+candidate pools coincide on 95 of the 100 questions (their ranked top-$k$
+coincide on all 100). Retrieval is not frozen for any run reported here: the
+endpoints are queried live, so figures from different runs are comparable in
+direction but not paired question-by-question.}
 \label{tab:scaled-retrieval}
 \begin{tabular}{lrrrr}
 \toprule
@@ -1464,6 +1469,16 @@ overlapping confidence intervals in both runs. Two independent 100-question
 samples that disagree about the direction of the difference are stronger
 evidence that no difference is being measured than either sample is on its own,
 and we read the pair that way rather than selecting the favourable one.
+
+A caveat applies to both samples equally. Neither run uses a frozen corpus
+snapshot --- the retrieval endpoints are queried live, and their contents change
+between runs --- so the two samples are independent draws from a moving
+distribution rather than a controlled replication. This is what makes the
+direction reversal informative rather than contradictory: two draws that
+disagree about the sign of a difference, each with intervals spanning zero, are
+consistent with there being no difference to find. A frozen snapshot would be
+required to make a positive claim about the size of one, and the harness
+supports recording and replaying one for that purpose.
 
 Three further observations. First, correctness is low for every arm --- between
 0.30 and 0.37 --- so on version-specific questions with a checkable answer, all
