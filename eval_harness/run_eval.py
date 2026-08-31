@@ -37,7 +37,7 @@ import re
 import sys
 import time
 from collections import Counter
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 # corpus_snapshot and rerank live at the project root, next to the package.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -97,6 +97,30 @@ def _save_qrels_cache(results_dir: str, cache: dict) -> None:
 
 
 PER_QUERY = "per_query.jsonl"
+
+
+def stratify_summary(records: Sequence[dict], key: str) -> str:
+    """
+    Report the mix a stratified selection actually produced, per field.
+
+    `key` may be composite ("category,ecosystem"). Looking the whole key up as
+    one field -- `r.get("category,ecosystem")` -- returns None for every record
+    and prints `None=100`, which reads as a successful stratification while
+    saying nothing. Each field is counted separately instead; a field with many
+    values is summarised by its spread rather than listed in full.
+    """
+    fields = [f.strip() for f in str(key).split(",") if f.strip()] or ["category"]
+    parts = []
+    for f in fields:
+        mix = Counter(r.get(f) for r in records)
+        if len(mix) <= 8:
+            body = ", ".join(f"{k}={v}" for k, v in
+                             sorted(mix.items(), key=lambda kv: str(kv[0])))
+        else:
+            body = (f"{len(mix)} distinct, "
+                    f"{min(mix.values())}-{max(mix.values())} each")
+        parts.append(f"{f}: {body}")
+    return "; ".join(parts)
 
 
 def _read_finished(run_dir: str, systems: List[str]) -> tuple:
@@ -164,9 +188,8 @@ def run(cfg: EvalConfig) -> str:
     if cfg.stratify and cfg.limit:
         before = len(records)
         records = bench_mod.stratified_limit(records, cfg.limit, cfg.stratify)
-        mix = Counter(r.get(cfg.stratify) for r in records)
-        print(f"[harness] stratified {cfg.limit}/{before} by {cfg.stratify}: "
-              + ", ".join(f"{k}={v}" for k, v in sorted(mix.items(), key=lambda kv: str(kv[0]))))
+        print(f"[harness] stratified {cfg.limit}/{before} by {cfg.stratify} -> "
+              + stratify_summary(records, cfg.stratify))
     ds_hash = dataset_hash(records)
     if cfg.resume:
         run_dir = (cfg.resume if os.path.isabs(cfg.resume)
