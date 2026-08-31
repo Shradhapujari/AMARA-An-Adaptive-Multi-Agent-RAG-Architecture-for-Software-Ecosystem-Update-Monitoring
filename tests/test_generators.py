@@ -64,7 +64,7 @@ def _fake_marag_module():
 def _single_agent(client, top_k=2):
     gen = object.__new__(G.SingleAgentGenerator)
     gen.marag = _fake_marag_module()
-    gen.retriever = types.SimpleNamespace(run=lambda q, top_k=4, original_query=None: DOCS)
+    gen.retriever = types.SimpleNamespace(run=lambda q, top_k=4, original_query=None, union=True: DOCS)
     gen.top_k = top_k
     gen.client = client
     return gen
@@ -75,7 +75,7 @@ def _marag(synth, top_k=2, template="TEMPLATE ANSWER", quality=0.7):
     gen.marag = _fake_marag_module()
     gen.rewriter = types.SimpleNamespace(
         run=lambda q: {"rewritten": q + " latest version release notes"})
-    gen.retriever = types.SimpleNamespace(run=lambda q, top_k=4, original_query=None: DOCS)
+    gen.retriever = types.SimpleNamespace(run=lambda q, top_k=4, original_query=None, union=True: DOCS)
     gen.evaluator = types.SimpleNamespace(
         run=lambda docs, q: {"answer": template, "quality": quality})
     gen.top_k = top_k
@@ -178,3 +178,161 @@ def test_spec_grammar_attaches_a_synthesiser_only_when_asked(monkeypatch):
 def test_unknown_spec_is_rejected():
     with pytest.raises(ValueError):
         G.build_generators(["marag_llm"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The ablation ladder and the rendering x retrieval factorial
+# ─────────────────────────────────────────────────────────────────────────
+# A reviewer's objection to the capability table is that the arms are not doing
+# the same task. The answer is that each adjacent rung differs by exactly one
+# capability, and that rendering is a factor crossing retrieval rather than a
+# property welded to the multi-agent arm. These tests hold that structure in
+# place: if a rung ever starts differing by two things at once, they fail.
+
+
+def _recording_retriever(docs=DOCS):
+    """Retriever stub that records the kwargs each call was made with."""
+    calls = []
+
+    def run(q, top_k=4, original_query=None, union=True):
+        calls.append({"query": q, "original_query": original_query,
+                      "union": union, "top_k": top_k})
+        return docs
+
+    return types.SimpleNamespace(run=run, calls=calls, last_pool=list(docs),
+                                 last_rerank_spec="bm25",
+                                 last_rerank_degraded=False)
+
+
+def _ladder_marag(synth=None, union=True, retry=False, signal="✅ positive",
+                  retriever=None):
+    gen = object.__new__(G.MultiAgentRAGGenerator)
+    gen.marag = _fake_marag_module()
+    gen.rewriter = types.SimpleNamespace(
+        run=lambda q: {"rewritten": q + " release notes"})
+    gen.retriever = retriever or _recording_retriever()
+    gen.evaluator = types.SimpleNamespace(
+        run=lambda docs, q: {"answer": "TEMPLATE", "quality": 0.1,
+                             "signal": signal})
+    gen.top_k = 2
+    gen.synth = synth
+    gen.union = union
+    gen.retry = retry
+    return gen
+
+
+def _single_agent_template(top_k=2):
+    gen = object.__new__(G.SingleAgentGenerator)
+    gen.marag = types.SimpleNamespace(
+        pause=lambda *a, **k: None, bar=lambda *a, **k: None,
+        EvaluatorAgent=lambda: types.SimpleNamespace(
+            run=lambda docs, q: {"answer": "TEMPLATE", "quality": 0.42,
+                                 "signal": "✅ positive"}))
+    gen.retriever = _recording_retriever()
+    gen.top_k = top_k
+    gen.render = "template"
+    gen.client = None
+    return gen
+
+
+def test_rewrite_only_fetches_one_phrasing_and_marag_fetches_both():
+    """A2 -> A3 is the union-fetch effect and nothing else."""
+    a2 = _ladder_marag(synth=CapturingClient(), union=False)
+    a3 = _ladder_marag(synth=CapturingClient(), union=True)
+    a2.generate(QUERY)
+    a3.generate(QUERY)
+
+    assert a2.retriever.calls[0]["union"] is False
+    assert a3.retriever.calls[0]["union"] is True
+    # Everything else about the call is identical, which is what makes the
+    # difference attributable to the union fetch.
+    for key in ("query", "original_query", "top_k"):
+        assert a2.retriever.calls[0][key] == a3.retriever.calls[0][key]
+
+
+def test_the_retry_arm_refetches_only_on_a_negative_signal():
+    """A3 -> A4 is ManagerAgent's adaptive retry and nothing else."""
+    negative = _ladder_marag(synth=CapturingClient(), retry=True,
+                             signal="⚠️  negative — manager will retry")
+    positive = _ladder_marag(synth=CapturingClient(), retry=True,
+                             signal="✅ positive")
+    off = _ladder_marag(synth=CapturingClient(), retry=False,
+                        signal="⚠️  negative — manager will retry")
+
+    assert negative.generate(QUERY)["retried"] is True
+    assert len(negative.retriever.calls) == 2
+    # The widened fetch still ranks against the user's own words.
+    assert negative.retriever.calls[1]["original_query"] == QUERY
+    assert negative.retriever.calls[1]["query"].startswith(QUERY)
+
+    assert positive.generate(QUERY)["retried"] is False
+    assert len(positive.retriever.calls) == 1
+    # Same negative signal, retry disabled: the rung below must not retry.
+    assert off.generate(QUERY)["retried"] is False
+    assert len(off.retriever.calls) == 1
+
+
+def test_the_retry_pool_is_the_union_of_both_fetches():
+    """Pool recall is the fetch ceiling; the retry must not hide the first pool."""
+    first = [DOCS[0]]
+    second = [DOCS[1], DOCS[2]]
+    state = {"n": 0}
+
+    def run(q, top_k=4, original_query=None, union=True):
+        state["n"] += 1
+        # RetrieverAgent overwrites last_pool on every call, as the real one does.
+        retriever.last_pool = first if state["n"] == 1 else second
+        return DOCS[:2]
+
+    retriever = types.SimpleNamespace(run=run, last_pool=first,
+                                      last_rerank_spec="bm25",
+                                      last_rerank_degraded=False)
+    gen = _ladder_marag(synth=CapturingClient(), retry=True,
+                        signal="⚠️  negative — manager will retry",
+                        retriever=retriever)
+    out = gen.generate(QUERY)
+
+    assert out["retried"] is True
+    titles = [d["title"] for d in out["pool"]]
+    assert titles == [d["title"] for d in first + second]
+
+
+def test_the_rewrite_only_rung_refuses_to_be_a_template_arm():
+    with pytest.raises(ValueError):
+        G.MultiAgentRAGGenerator(union=False)
+
+
+def test_the_template_cell_of_the_factorial_calls_no_model():
+    """single_agent_template completes the 2x2 without an LLM call."""
+    gen = _single_agent_template()
+    out = gen.generate(QUERY)
+
+    assert out["answer"] == "TEMPLATE"
+    assert out["self_quality"] == 0.42
+    assert gen.client is None          # deterministic, and free to carry
+    # Baseline retrieval, unchanged: the raw question, single phrasing.
+    assert gen.retriever.calls[0]["original_query"] == QUERY
+    assert gen.retriever.calls[0]["query"] == QUERY
+
+
+def test_rendering_crosses_retrieval_rather_than_being_welded_to_an_arm():
+    """The prose and template cells of one row retrieve identically."""
+    prose = _single_agent(CapturingClient())
+    template = _single_agent_template()
+
+    assert ([d["doc_id"] for d in prose.generate(QUERY)["docs"]]
+            == [d["doc_id"] for d in template.generate(QUERY)["docs"]])
+
+
+def test_the_ladder_specs_build_distinctly_named_arms():
+    specs = ["single_agent", "single_agent_template",
+             "rewrite_only:ollama:mistral", "marag:ollama:mistral",
+             "marag_retry:ollama:mistral", "marag_retry", "marag"]
+    assert [g.name for g in G.build_generators(specs)] == [
+        "single_agent", "single_agent_template", "rewrite_only",
+        "marag_llm", "marag_llm_retry", "marag_retry", "marag"]
+
+
+def test_an_unknown_render_mode_is_rejected():
+    with pytest.raises(ValueError):
+        G.SingleAgentGenerator(CapturingClient(), render="bullets")

@@ -1385,11 +1385,18 @@ class RetrieverAgent:
     last_rerank_spec: str = ""
     last_rerank_degraded: bool = False
 
-    def run(self, rewritten_query: str, top_k: int = 4, original_query: str = "") -> list:
+    def run(self, rewritten_query: str, top_k: int = 4, original_query: str = "",
+            union: bool = True) -> list:
         print(f"\n  {self.name}")
         bar()
         print(f"  Purpose  : Live API search — Releases + Reddit + CVE")
         pause()
+
+        # `union` is the ablation switch for the two-phrasing fetch described
+        # in STEP 3. Default True = the shipped behaviour. Passing False keeps
+        # everything else identical (including vendor detection, which still
+        # reads original_query) and fetches the rewritten phrasing only, so an
+        # arm built on union=False isolates query rewriting from union fetch.
 
         # ── STEP 1: Extract vendor/product from query (Dr. Berhe) ──
         # Always extract vendor from ORIGINAL query (not rewritten)
@@ -1444,7 +1451,7 @@ class RetrieverAgent:
                     # the ranking within it is keyed on the query wording, so
                     # both phrasings have to be asked for.
                     vendor_reddit += fetch_vendor_reddit(sub, query=rewritten_query, limit=8)
-                    if original_query and original_query.strip().lower() != rewritten_query.strip().lower():
+                    if union and original_query and original_query.strip().lower() != rewritten_query.strip().lower():
                         vendor_reddit += fetch_vendor_reddit(sub, query=original_query, limit=8)
 
         # ── STEP 3: General sources, fetched for BOTH phrasings ──
@@ -1455,7 +1462,7 @@ class RetrieverAgent:
         # never in the pool, so the rewrite must augment the search rather than
         # substitute for it. Both phrasings are searched and the pools unioned.
         search_queries = [rewritten_query]
-        if original_query and original_query.strip().lower() != rewritten_query.strip().lower():
+        if union and original_query and original_query.strip().lower() != rewritten_query.strip().lower():
             search_queries.append(original_query)
 
         gen_releases, gen_apple, gen_cisa, gen_circl = [], [], [], []
