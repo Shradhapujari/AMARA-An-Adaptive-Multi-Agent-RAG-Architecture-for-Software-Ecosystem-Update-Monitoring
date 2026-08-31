@@ -215,9 +215,14 @@ class TestHarnessIntegration:
         assert len(load_dataset(BENCHMARK_REL)) == EXPECTED_TOTAL
 
     def test_load_dataset_records_are_well_formed(self):
+        # The required keys must all be present. Descriptive fields such as
+        # `ecosystem` are deliberately carried through as well, because
+        # `--stratify category,ecosystem` groups on them — dropping them makes
+        # every record's ecosystem None and silently collapses that dimension.
+        required = {"id", "query", "category", "ground_truth", "reddit_id"}
         for rec in load_dataset(BENCHMARK_REL):
-            assert set(rec) == {"id", "query", "category", "ground_truth",
-                                "reddit_id"}
+            assert required <= set(rec)
+            assert "ecosystem" in rec
             assert isinstance(rec["id"], int)
             assert isinstance(rec["query"], str) and rec["query"].strip()
             assert rec["category"] in EXPECTED_CATEGORIES
