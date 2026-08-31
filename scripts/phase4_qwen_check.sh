@@ -25,7 +25,15 @@ set -euo pipefail
 main() {
 cd "$(dirname "$0")/.."
 RUN_DIR="${1:?usage: phase4_qwen_check.sh <run_dir> [out.md]}"
-OUT="${2:-results/$(basename "$RUN_DIR")_qwen_check.md}"
+# judge_robustness.py joins this against RUN_DIR itself (os.path.join(run_dir,
+# out)), so this must be a bare filename or a path relative to the run
+# directory -- NOT repo-root-relative ("results/..."). Passing "results/foo.md"
+# here made it try to create run_dir/results/foo.md, whose parent doesn't
+# exist, and crashed with FileNotFoundError after judging all 100 questions --
+# the judging itself succeeded and only the write failed. Landing the report
+# inside the run directory it re-judged is also the right place for it: that
+# is where every other per-run artifact (config.json, per_query.jsonl) lives.
+OUT="${2:-$(basename "$RUN_DIR")_qwen_check.md}"
 
 ./venv311/bin/python judge_robustness.py "$RUN_DIR" \
     --judge ollama:qwen2.5:7b-instruct \
