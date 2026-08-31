@@ -53,7 +53,7 @@ def _fake_marag_module():
 def _retriever(spec="bm25", degraded=False, pool=POOL_DOCS):
     """A retriever stub that reports diagnostics the way RetrieverAgent does."""
     r = types.SimpleNamespace(
-        run=lambda q, top_k=4, original_query=None: TOP_K_DOCS,
+        run=lambda q, top_k=4, original_query=None, union=True: TOP_K_DOCS,
         last_pool=pool,
         last_rank_query="original",
         last_rerank_spec=spec,
@@ -153,7 +153,7 @@ def test_a_retriever_without_diagnostics_does_not_break_the_run():
     gen = object.__new__(G.SingleAgentGenerator)
     gen.marag = _fake_marag_module()
     gen.retriever = types.SimpleNamespace(
-        run=lambda q, top_k=4, original_query=None: TOP_K_DOCS)
+        run=lambda q, top_k=4, original_query=None, union=True: TOP_K_DOCS)
     gen.top_k = 2
     gen.client = StubClient()
     out = gen.generate("q")

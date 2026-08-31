@@ -18,8 +18,11 @@ the final ranked list cannot tell apart.
 doc is a dict with at least {"doc_id", "title", "text", "source", "url"}.
 
 Systems:
-  - MultiAgentRAGGenerator        : full 4-agent pipeline (Rewriter -> Retriever -> RLAIF Evaluator)
-  - SingleAgentGenerator  : the paper's baseline (raw query -> keyword retrieval -> 1 LLM call)
+  - MultiAgentRAGGenerator        : full 4-agent pipeline (Rewriter -> Retriever -> RLAIF Evaluator),
+                            with `union` and `retry` switches that ablate the
+                            two-phrasing fetch and ManagerAgent's retry loop
+  - SingleAgentGenerator  : the paper's baseline (raw query -> keyword retrieval -> 1 LLM call),
+                            with `render="template"` for the fourth factorial cell
   - RawLLMGenerator       : no retrieval, ask a model directly (GPT/Claude/Llama/...)
                             -> this is the "compare against other models" column
 
@@ -38,6 +41,23 @@ with the same model as the baseline. Then the only difference left between the
 two arms is the retrieval pipeline, which is the claim under test. `marag`
 stays available because it is the system the paper describes; `marag_llm`
 keeps its template answer under `template_answer` so nothing is lost.
+
+Better still, `single_agent_template` (SingleAgentGenerator with
+render="template") completes the 2x2:
+
+                      prose            template
+  baseline retr.      single_agent     single_agent_template
+  multi-agent retr.   marag_llm        marag
+
+so rendering and retrieval are main effects with an interaction term, instead
+of a format effect inferred by differencing two arms. The template cell calls
+no LLM -- EvaluatorAgent.run is deterministic and document-agnostic -- so it
+costs nothing to carry in every run.
+
+The ablation ladder (see eval_harness/README.md) makes each remaining
+capability a single-factor step: single_agent -> rewrite_only (adds rewriting)
+-> marag_llm (adds union fetch) -> marag_llm_retry (adds adaptive retry) ->
+marag (adds template rendering).
 
 The Multi-Agent RAG System pipeline (`multiagent_rag_v3.py`) is a noisy CLI script; we import it
 and silence stdout + the artificial `pause()`/`bar()` sleeps so it runs fast and
@@ -127,6 +147,19 @@ def build_synthesis_prompt(query: str, docs: List[dict], top_k: int) -> str:
     )
 
 
+def render_template(marag_mod, docs: List[dict], query: str) -> Dict:
+    """The other rendering: EvaluatorAgent's assembled template.
+
+    Symmetric counterpart to `build_synthesis_prompt`. EvaluatorAgent.run is
+    document-agnostic, so any arm's retrieved docs can be rendered this way --
+    which is what makes rendering a *factor* that crosses retrieval rather than
+    a property welded to the multi-agent arm. Returns the evaluator's whole
+    result so callers can also read its `quality` and `signal`.
+    """
+    with _silenced(marag_mod):
+        return marag_mod.EvaluatorAgent().run(docs, query)
+
+
 class Generator:
     name = "base"
 
@@ -149,8 +182,14 @@ class MultiAgentRAGGenerator(Generator):
     """
 
     name = "marag"
+    # Defaults live on the class, not only in __init__: generate() reads them,
+    # and instances built with object.__new__ (the test stubs, which swap in
+    # fake agents) never run __init__.
+    union = True
+    retry = False
 
-    def __init__(self, top_k: int = 4, synth: Optional[LLMClient] = None):
+    def __init__(self, top_k: int = 4, synth: Optional[LLMClient] = None,
+                 union: bool = True, retry: bool = False):
         import multiagent_rag_v3 as marag
         self.marag = marag
         self.rewriter = marag.QueryRewriterAgent()
@@ -158,18 +197,68 @@ class MultiAgentRAGGenerator(Generator):
         self.evaluator = marag.EvaluatorAgent()
         self.top_k = top_k
         self.synth = synth
-        if synth is not None:
-            self.name = "marag_llm"
+        self.union = union
+        self.retry = retry
+        base = "marag" if synth is None else "marag_llm"
+        if not union:
+            # Rewriting without the two-phrasing fetch: one rung below
+            # marag_llm on the ladder, so marag_llm minus this arm is the
+            # union-fetch effect and nothing else. The ladder compares it
+            # against a prose arm, so a template answer here would reintroduce
+            # the rendering confound the ladder exists to separate.
+            if synth is None:
+                raise ValueError(
+                    "union=False is the 'rewrite_only' ablation rung, which is "
+                    "compared against prose arms; pass synth= so its answer is "
+                    "prose too")
+            base = "rewrite_only"
+        if retry:
+            base += "_retry"
+        self.name = base
 
     def available(self) -> bool:
         return True if self.synth is None else self.synth.available()
 
     def generate(self, query: str) -> Dict:
+        retried = False
         with _silenced(self.marag):
             rewrite = self.rewriter.run(query)
             docs = self.retriever.run(rewrite["rewritten"], top_k=self.top_k,
-                                      original_query=query)
+                                      original_query=query, union=self.union)
+            pool = list(getattr(self.retriever, "last_pool", []) or [])
             result = self.evaluator.run(docs, query)
+            # `"retry" not in query` is ManagerAgent's own recursion guard,
+            # reproduced verbatim: it also means a question that happens to
+            # contain the word "retry" never triggers one. Faithful to the
+            # system under test, and a reason not to read this arm's retry rate
+            # as a property of the questions alone.
+            if self.retry and "negative" in result.get("signal", "") \
+                    and "retry" not in query:
+                # ManagerAgent's adaptive loop (multiagent_rag_v3.py, class
+                # ManagerAgent): on a negative RLAIF signal, widen the FETCH
+                # with filler terms while still ranking against the user's own
+                # words. Reproduced here rather than called because
+                # ManagerAgent.run returns only the answer string and the
+                # harness needs the retrieved documents too.
+                #
+                # NOTE the real threshold: EvaluatorAgent emits the negative
+                # signal at quality < 0.15, not the 0.30 the write-up claims.
+                # 0.30 is a different constant in that method (a quality floor
+                # for tier-1 and Apple sources).
+                retried = True
+                docs = self.retriever.run(query + " software update release",
+                                          top_k=self.top_k, original_query=query,
+                                          union=self.union)
+                # The retry OVERWRITES RetrieverAgent.last_pool, so reporting it
+                # alone would understate the fetch: the system saw both pools,
+                # and pool recall is meant to be the ceiling of everything
+                # fetched. Union them, first attempt first, deduped by doc_id.
+                seen = {doc_id(d) for d in pool}
+                for d in (getattr(self.retriever, "last_pool", []) or []):
+                    if doc_id(d) not in seen:
+                        seen.add(doc_id(d))
+                        pool.append(d)
+                result = self.evaluator.run(docs, query)
         template_answer = result.get("answer", "")
         answer = template_answer
         if self.synth is not None:
@@ -184,9 +273,10 @@ class MultiAgentRAGGenerator(Generator):
             "docs": [normalize_doc(d) for d in docs],
             "self_quality": result.get("quality"),
             "rewritten_query": rewrite.get("rewritten", ""),
-            "pool": [normalize_doc(d) for d in getattr(self.retriever, "last_pool", [])],
+            "pool": [normalize_doc(d) for d in pool],
             "rerank_spec": getattr(self.retriever, "last_rerank_spec", ""),
             "rerank_degraded": getattr(self.retriever, "last_rerank_degraded", False),
+            "retried": retried,
         }
         if self.synth is not None:
             # The published template answer, kept for audit: the synthesised
@@ -205,29 +295,49 @@ class SingleAgentGenerator(Generator):
     """
 
     name = "single_agent"
+    render = "prose"   # class default, for the same reason as above
 
-    def __init__(self, client: Optional[LLMClient] = None, top_k: int = 4):
+    def __init__(self, client: Optional[LLMClient] = None, top_k: int = 4,
+                 render: str = "prose"):
         import multiagent_rag_v3 as marag
         self.marag = marag
         self.retriever = marag.RetrieverAgent()
         self.top_k = top_k
-        self.client = client or make_client("ollama:mistral")
+        if render not in ("prose", "template"):
+            raise ValueError(f"render must be 'prose' or 'template', got {render!r}")
+        self.render = render
+        # `render="template"` is the fourth cell of the rendering x retrieval
+        # design: baseline retrieval, but the answer assembled by
+        # EvaluatorAgent's template instead of synthesised as prose. It closes
+        # the factorial that marag / marag_llm / single_agent leave open, so
+        # the format effect can be estimated as a main effect with an
+        # interaction term rather than inferred by differencing two arms.
+        # It calls no LLM, so it is deterministic and effectively free.
+        self.client = None if render == "template" else (client or make_client("ollama:mistral"))
+        if render == "template":
+            self.name = "single_agent_template"
 
     def available(self) -> bool:
-        return self.client.available()
+        return True if self.client is None else self.client.available()
 
     def generate(self, query: str) -> Dict:
         with _silenced(self.marag):
             docs = self.retriever.run(query, top_k=self.top_k, original_query=query)
-        prompt = build_synthesis_prompt(query, docs, self.top_k)
-        try:
-            answer = self.client.generate(prompt, temperature=0.0, max_tokens=400)
-        except LLMError as e:
-            answer = f"[generation error: {e}]"
+        self_quality = None
+        if self.render == "template":
+            result = render_template(self.marag, docs, query)
+            answer = result.get("answer", "")
+            self_quality = result.get("quality")
+        else:
+            prompt = build_synthesis_prompt(query, docs, self.top_k)
+            try:
+                answer = self.client.generate(prompt, temperature=0.0, max_tokens=400)
+            except LLMError as e:
+                answer = f"[generation error: {e}]"
         return {
             "answer": answer,
             "docs": [normalize_doc(d) for d in docs],
-            "self_quality": None,
+            "self_quality": self_quality,
             # The baseline shares RetrieverAgent with the multi-agent arm, so it
             # is reranked by the same backend. That is precisely why it is not a
             # rerank-independent control, and why the pool is logged for it too.
@@ -316,6 +426,17 @@ def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:
                                       model through the shared prompt, so its
                                       answer scores are comparable to
                                       single_agent's (reported as "marag_llm")
+      "rewrite_only:ollama:mistral"-> rewriting WITHOUT the two-phrasing union
+                                      fetch, prose answer. One ablation rung
+                                      below marag_llm.
+      "marag_retry:ollama:mistral" -> marag_llm plus ManagerAgent's adaptive
+                                      retry on a negative RLAIF signal
+                                      (reported as "marag_llm_retry");
+                                      "marag_retry" alone keeps the template
+                                      answer (reported as "marag_retry")
+      "single_agent_template"      -> baseline retrieval rendered as the
+                                      EvaluatorAgent template: the fourth cell
+                                      of the rendering x retrieval factorial
       "selfreflective"             -> Self-RAG/CRAG-style critique loop over the
                                       same retrieval (reimplementation, not the
                                       published checkpoints)
@@ -332,6 +453,19 @@ def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:
         elif spec.startswith("marag:"):
             gens.append(MultiAgentRAGGenerator(
                 top_k=top_k, synth=make_client(spec.split(":", 1)[1])))
+        elif spec == "rewrite_only":
+            gens.append(MultiAgentRAGGenerator(
+                top_k=top_k, synth=make_client("ollama:mistral"), union=False))
+        elif spec.startswith("rewrite_only:"):
+            gens.append(MultiAgentRAGGenerator(
+                top_k=top_k, synth=make_client(spec.split(":", 1)[1]), union=False))
+        elif spec == "marag_retry":
+            gens.append(MultiAgentRAGGenerator(top_k=top_k, retry=True))
+        elif spec.startswith("marag_retry:"):
+            gens.append(MultiAgentRAGGenerator(
+                top_k=top_k, synth=make_client(spec.split(":", 1)[1]), retry=True))
+        elif spec == "single_agent_template":
+            gens.append(SingleAgentGenerator(top_k=top_k, render="template"))
         elif spec == "single_agent":
             gens.append(SingleAgentGenerator(top_k=top_k))
         elif spec.startswith("single_agent:"):

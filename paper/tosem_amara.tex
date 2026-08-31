@@ -836,7 +836,7 @@ feedback.
 \label{fig:architecture}
 \end{figure}
 
-\subsection{Agent Definitions}
+\subsection{Agent Definitions}\label{sec:agents}
 
 The architecture comprises four agents organized under Orchestrator
 coordination.
@@ -858,7 +858,7 @@ incorporated before query generation.
 The Retriever performs vendor-aware document retrieval. It first
 attempts to identify the software vendor referenced in the query using
 exact matching, alias lookup, and fuzzy matching against a registry of
-14,223 software vendors and 628 software-related subreddits. If a
+14,223 software product names and 628 software-related subreddits. If a
 vendor is detected, retrieval is restricted to vendor-specific
 release notes, advisories, and community discussions. Otherwise, a
 general retrieval logic is used. The Retriever returns ranked
@@ -868,9 +868,14 @@ documents without evaluating their quality \cite{guan2025, zheng2026, yang2026}.
 The Evaluator estimates retrieval quality using a deterministic score
 between 0.0 and 1.0. The score combines evidence from retrieval
 volume, release-note matches, community matches, and CVE matches. If
-the score falls below a predefined threshold ($\theta = 0.30$), the
-Evaluator signals the Orchestrator to perform an additional retrieval
-attempt. The Evaluator does not generate answers \cite{zhuge2024}.
+the score falls below a predefined threshold, the Evaluator signals the
+Orchestrator to perform an additional retrieval attempt. The released
+implementation sets that threshold at $\theta = 0.15$; the earlier
+evaluation harness, whose carried-over measurements
+Section~\ref{sec:carried-over} reports, used $\theta = 0.30$. A second
+constant of 0.30 appears in the same scoring method and is unrelated to the
+retry decision: it is a quality floor applied when a Tier~1 or Apple source
+is present. The Evaluator does not generate answers \cite{zhuge2024}.
 
 \subsection{Adaptive Feedback and Self-Improvement}
 
@@ -886,7 +891,11 @@ retrieval outcomes across sessions. Successful retrievals increase
 associated term weights, while unsuccessful retrievals decrease them.
 These scores are subsequently used by the Query Rewriter to influence
 future retrieval queries. This mechanism provides adaptation without
-human preference labels, manual annotation, or model retraining.
+human preference labels, manual annotation, or model retraining. It is
+exercised by the earlier evaluation harness whose measurements
+Section~\ref{sec:carried-over} reports, and not by the configuration measured
+in Sections~\ref{sec:two-metrics}--\ref{sec:scaled-eval}; see
+Section~\ref{sec:setup}.
 
 \subsection{Software Ecosystem Data Sources}\label{sec:datasources}
 
@@ -1317,17 +1326,113 @@ posts collected through the software ecosystem data lake and filtered
 using minimum quality criteria of at least 10 comments, 3 author
 replies, and a quality score of at least 0.30.
 
-The single-agent baseline performs query rewriting, retrieval
-evaluation, and answer generation within a single agent without
-specialized agents, adaptive retry, or self-improvement memory. It
+The single-agent baseline issues the user's question directly and performs
+retrieval, evaluation, and answer generation within a single agent, without a
+rewriting step, specialized agents, adaptive retry, or self-improvement memory.
+It is the $\mathrm{fold}(q) = \mathrm{fold}(\tilde{q})$ case of
+Equation~\eqref{eq:phrasings}, so the union of
+Section~\ref{sec:union-fetch} leaves it unchanged. It
 uses the same retrieval endpoints and answer synthesis prompt as the
 proposed architecture, isolating the effect of architectural
 decomposition.
+
+Two capabilities of the architecture are outside what the multi-agent arm of
+Sections~\ref{sec:two-metrics}--\ref{sec:scaled-eval} exercises, and we state
+this rather than let the architecture description stand in for the measured
+configuration. That arm runs the Query Rewriter, the Retriever, and the
+Evaluator directly: the Orchestrator's retry loop
+(Section~\ref{sec:agents}) is not invoked, and the Self-Improvement Memory is
+not attached. The comparison those sections report is therefore between the
+baseline and a memoryless, retry-free multi-agent pipeline, which is the
+configuration the union-fetch finding concerns. The retry and the memory are
+measured only where Section~\ref{sec:carried-over} says they are.
 
 All experiments were performed using Llama~3.1~8B executed through
 Ollama with temperature set to zero. The evaluation platform consisted
 of Apple Silicon hardware with 24\,GB memory and Metal GPU
 acceleration.
+
+\subsection{Arm Comparability and the Ablation Ladder}\label{sec:ladder}
+
+Set side by side, the two arms do not hold the same capabilities. The
+multi-agent arm rewrites the query, fetches both phrasings, scores its own
+retrieval, and---in the full architecture---retries and accumulates memory; the
+baseline does none of these. A reader is entitled to ask whether the two arms
+are performing the same task at all, and if they are not, what a difference
+between them measures.
+
+The asymmetries are of two kinds, and only one of them is a defect. Query
+rewriting, union fetch, and adaptive retry \emph{are} the treatment: they are
+the independent variable, and removing them from the multi-agent arm would
+leave nothing to evaluate. What makes their comparison sound is not symmetry of
+capability but symmetry of everything else. Both arms retrieve from the same
+endpoints through the same Retriever, cut to the same $k$, synthesize through
+the same prompt with the same model, are scored by the same judge on the same
+questions, and are compared pairwise within a single run so that corpus drift
+cancels. The baseline is an ablation of the coordination layer, not a different
+system.
+
+The second kind of asymmetry is not part of the treatment and does leak into
+measurement: the bespoke retrieval score of Section~\ref{sec:two-metrics} and
+the answer rendering of Section~\ref{sec:scaled-eval}. The bespoke score is the
+Evaluator's internal control signal---the same quantity that gates the
+retry---and the baseline has no counterpart to it, so reporting it as the
+comparison metric grades the treatment with its own ruler; Section~\ref{sec:metric-threat}
+retires it for that reason. Answer rendering is neutralized rather than
+defended, by the \texttt{marag\_llm} arm. Confounds of this kind must be
+removed; treatment asymmetries must not be.
+
+Removing them one at a time is what the ablation ladder in
+Table~\ref{tab:ladder} does. Each rung differs from the one below it by exactly
+one capability, so each adjacent pair is a single-factor comparison rather than
+a comparison of two architectures. Rung A3 additionally runs the Evaluator, but
+in a prose arm the Evaluator's output is only its quality score: it changes
+neither the retrieved documents nor the answer, so A2 versus A3 isolates the
+union fetch and nothing else.
+
+\begin{table}[t]
+\caption{The ablation ladder. Each rung adds one capability to the rung below,
+so every adjacent pair is a single-factor comparison. Three rungs carry the
+measurements reported in this paper; two are implemented in the released
+harness and not yet run.}
+\label{tab:ladder}
+\begin{tabular}{llll}
+\toprule
+Rung & Arm & Capability added & Status \\
+\midrule
+A1 & \texttt{single\_agent} & retrieval on the user's question & Measured \\
+A2 & \texttt{rewrite\_only} & query rewriting & Implemented \\
+A3 & \texttt{marag\_llm} & union fetch over both phrasings & Measured \\
+A4 & \texttt{marag\_llm\_retry} & Orchestrator retry & Implemented \\
+A5 & \texttt{marag} & template rendering & Measured \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The same reasoning applies to rendering, which is not a property of the
+multi-agent arm but a factor crossing it. Of the four cells of
+rendering~$\times$~retrieval, three were populated in
+Section~\ref{sec:scaled-eval}: baseline retrieval with prose
+(\texttt{single\_agent}), multi-agent retrieval with prose
+(\texttt{marag\_llm}), and multi-agent retrieval with a template
+(\texttt{marag}). The format effect reported there is therefore an inference
+across two arms rather than an estimated main effect. The fourth cell---baseline
+retrieval rendered through the Evaluator's template---closes the design; it
+requires no generation call, since the template is assembled deterministically
+from the retrieved documents, and it is available in the released harness as
+\texttt{single\_agent\_template}. With all four cells, rendering and retrieval
+become main effects with an interaction term.
+
+We report no measurement for A2, A4, or the fourth cell here. They are
+implemented and unit-tested in the released harness, and the ladder is the
+protocol we recommend for any subsequent evaluation of this architecture rather
+than a result of this one. Two constraints apply to such a run. Because the
+retrieval endpoints are live, every arm must execute against a recorded corpus
+snapshot in strict replay, or the rungs will differ by corpus drift as well as
+by capability. And if the Self-Improvement Memory is ever attached as a further
+rung, term-weight learning makes each question's outcome depend on the
+questions preceding it; per-question differences then cease to be exchangeable
+and the paired tests used throughout this section no longer apply as written.
 
 \section{Results}\label{sec:results}
 
@@ -1762,19 +1867,16 @@ rather than left for the reader to notice.
 
 \subsection{Answer Accuracy}
 
-To evaluate answer quality beyond retrieval metrics, the system was
-tested on version-specific software update questions. For example, the
-system correctly identified Linux v7.0.0 (released April 13, 2026) and
-Firefox v149.0.1 (released April 7, 2026) from the corresponding
-release sources. All reported version numbers were traceable to
-retrieved documents.
+Retrieval metrics score the documents, not the answer written from them, so
+the earlier evaluation also read the answers to version-specific questions. On
+those questions the pipeline named Linux v7.0.0 (released 13 April 2026) and
+Firefox v149.0.1 (released 7 April 2026), and in each case the version and date
+it reported appeared in a document it had retrieved.
 
-A supplementary evaluation using ten questions from the live questions
-endpoint produced four fully correct answers and six partially correct
-answers. Across these questions, the system did not generate any
-unsupported version numbers, release dates, or software update claims.
-All version-specific information appearing in generated answers could be
-traced to retrieved release notes or other retrieved documents.
+We then read ten answers to questions drawn from the live questions endpoint:
+four fully correct, six partially correct. On none of
+the ten did the pipeline state a version number, release date, or update claim
+that was absent from its retrieved documents.
 
 Two things about that count need saying, because taken alone it reads more
 favourably than the evidence supports. It is a lenient scoring: ``partially
@@ -2005,15 +2107,23 @@ Example execution trace of the Query Rewriter, Retriever, and Evaluator agents.
 \end{figure}
 \subsection{Adaptive Feedback}
 
-The Evaluator triggered retrieval retries when the initial retrieval
-quality score fell below $\theta = 0.30$. In these cases, the
-Orchestrator executed an additional retrieval cycle using a revised
-query generated by the Query Rewriter. This behavior occurred without
-manual intervention during evaluation and allowed retrieval to continue
-when the initial result set was insufficient.
+The Evaluator signals a retry when the initial retrieval quality score falls
+below the threshold that harness used ($\theta = 0.30$; the released
+implementation uses 0.15, Section~\ref{sec:agents}). On that signal the
+Orchestrator executes an additional retrieval cycle using a revised query
+generated by the Query Rewriter, without manual intervention.
 
-We do not report a retry rate or an effect of retrying on retrieval quality;
-neither was instrumented, and both should be. The mechanism also interacts with
+We report no retry rate and no effect of retrying on retrieval quality, and
+the reason is worth stating precisely rather than as an omission. The retry
+\emph{was} instrumented: each per-question record carries a flag for whether a
+retry occurred, and the harness reports the rate. In the surviving run artifact
+of that harness the rate is zero --- no question crossed the threshold, so no
+retry fired --- and the effect of retrying on retrieval quality was therefore
+never measured. What the mechanism does when it fires is a description of the
+code, not a measurement. Worse for the mechanism's case, the configuration
+evaluated in Sections~\ref{sec:two-metrics}--\ref{sec:scaled-eval} does not
+invoke the Orchestrator at all (Section~\ref{sec:setup}), so none of the
+retrieval numbers in this paper include a retry. The mechanism also interacts with
 the defect of Section~\ref{sec:localizing} in a way worth stating: before the
 remedy, a retry re-issued a second rewritten query in place of the user's
 question, so an insufficient result set was retried with the same substitution
@@ -2069,9 +2179,12 @@ ten highest-scoring terms.
 
 \subsection{Representative User Questions and Answers}
 
-Table~\ref{tab:examples} presents representative examples from the
-evaluation dataset. The examples include correctly answered queries,
-partially relevant answers, and incorrect answers.
+Table~\ref{tab:examples} gives nine answers from the earlier evaluation set,
+three from each outcome we distinguish: correct, partially relevant, and
+incorrect. They are chosen to show what each outcome looks like in this domain,
+not sampled to estimate how often each occurs --- the rates for that are the
+correctness figures of Section~\ref{sec:scaled-eval}, which are computed on the
+questions carrying a reference answer.
 
 \begin{table*}[t]
 \centering\small
@@ -2153,29 +2266,41 @@ Q9: What small IT task always turns into a nightmare?
 
 \subsection{Failure Analysis}
 
-The three incorrect examples in Table~\ref{tab:examples} correspond to
-three recurring failure modes observed during evaluation.
+The three incorrect answers in Table~\ref{tab:examples} fail in three
+different ways, and each names a distinct stage of the pipeline. We describe
+them because the stage is identifiable, which is the property
+Section~\ref{sec:decomposition} argues decomposition buys and the retrieval
+metrics do not score. Three examples establish that these failures occur, not
+how often.
 
 \paragraph{Temporal Question Filtering.}
-The question ``What was the Linux version on January 1st 2026?'' returned
-the latest Linux release rather than the release available on the
-specified date. The query rewriter preserved the temporal constraint,
-but the constraint was not passed to the retrieval endpoint.
+Asked ``What was the Linux version on January 1st 2026?'', the pipeline
+returned the newest Linux release rather than the one current on that date. The
+rewriter kept the date; the retrieval call dropped it. This is the paper's own
+finding in miniature --- a constraint present in the query never reaches the
+endpoint --- and it is now partly repaired: \texttt{extract\_date\_from\_query}
+parses a target date and the vendor release lookup filters to the release
+current at it. Two limits remain, and both are visible in the code rather than
+in a score. The filter applies to that one endpoint, so the rest of
+Table~\ref{tab:endpoints} is unaffected; and the date is parsed from $\tilde{q}$ rather than $q$, the single
+place the rule of Section~\ref{sec:rewrite-roles} is inverted, so a rewrite
+that drops the date drops the constraint with it.
 
 \paragraph{Vendor Extraction Failure.}
-The question ``Synology NAS unreachable after upgrade'' did not produce a
-vendor match and therefore fell back to general retrieval. This
-occurred because important domain-specific terms were removed during
-preprocessing.
+``Synology NAS unreachable after upgrade'' matched no vendor, so retrieval
+fell back to the general endpoints. Preprocessing had removed the terms that
+would have matched: the failure is in vendor extraction, upstream of retrieval,
+and no amount of retrieval or ranking work downstream of it recovers the
+vendor-specific sources.
 
 \paragraph{Opinion-Oriented Queries.}
-The question ``What small IT task always turns into a nightmare?''
-contains no software vendor reference and does not correspond to a
-factual software update question. The system correctly failed to locate
-relevant documents but did not explicitly reject the question.
-
-These three cases account for the incorrect examples reported in
-Table~\ref{tab:examples}.
+``What small IT task always turns into a nightmare?'' names no vendor and
+asks for no fact about an update. The pipeline retrieved nothing relevant, which
+is right, and reported the empty result rather than rejecting the question,
+which is the gap: it has a way to say that retrieval returned nothing and no way
+to say that a question is outside what it can answer. Declining is the behaviour the
+CRAG-style scoring of Section~\ref{sec:scaled-eval} rewards, and this case is
+where the architecture's evaluator could supply it and does not.
 
 \subsection{Implementation Comparison}
 
@@ -2187,19 +2312,27 @@ the retrieved sets, not by a metric, and this paper's own subject is that
 whether two systems are ``equivalent'' depends on which measure is applied
 (Section~\ref{sec:metric-threat}).
 
-The Pure Python implementation provided the most direct execution
-trace. LangChain exposed additional intermediate execution information
-through callback logging. Within smolagents, ToolCallingAgent executed
-reliably with Llama~3.1~8B, whereas Code Agent occasionally generated
-invalid tool calls and repeated execution cycles.
+The three differ in what they expose rather than in what they retrieve. Pure
+Python gives the most direct execution trace and is the implementation every
+measurement in this paper was taken from. LangChain adds intermediate state
+through callback logging. Within smolagents, ToolCallingAgent ran reliably on
+Llama~3.1~8B while Code Agent intermittently emitted invalid tool calls and
+repeated execution cycles, which is a property of that agent under an 8B model
+and not of the architecture.
 
 \subsection{Qualitative Analysis}
 
-Execution traces showed the Orchestrator coordinating query rewriting,
-retrieval, evaluation, and answer synthesis across multiple document
-sources. Retrieved documents were incorporated into generated answers
-only after evaluation. Detailed execution traces are omitted due to
-space constraints.
+Reading execution traces is how the pipeline is debugged, and it is worth
+saying what that reading does and does not establish. The traces confirm the
+control flow: the Orchestrator delegates rewriting, retrieval and evaluation in
+turn, and no document reaches synthesis before the Evaluator has scored the set
+it belongs to. What they cannot show is the defect of
+Section~\ref{sec:localizing}. A trace displays the documents that were
+retrieved; the missing 22 were not in it to be noticed, and we read these traces
+throughout the pipeline's development without seeing them. That is the argument for recording the
+pre-ranking candidate pool as data rather than inspecting the pipeline as
+narrative. Full traces are recorded per question by the released harness rather
+than reproduced here; Figure~\ref{fig:execution_trace} shows one.
 
 \subsection{Summary of Findings}\label{sec:results-summary}
 
@@ -2661,7 +2794,7 @@ from 0.250 to 0.625 while leaving nDCG@3 near 0.19, because no ranking function
 can promote a document that was never a candidate.
 
 Issuing both phrasings and unioning the candidate pools resolves it. On a
-100-question benchmark spanning 24 software ecosystems, the fetch-time loss
+100-question benchmark spanning 21 software ecosystems, the fetch-time loss
 falls from 96\% to 12\%, and the repaired pipeline reaches nDCG@3 of 0.859
 against the baseline's 0.863 --- parity, at approximately twice the latency. We report this rather than the
 improvement our original metric showed. On this benchmark, in this domain,
