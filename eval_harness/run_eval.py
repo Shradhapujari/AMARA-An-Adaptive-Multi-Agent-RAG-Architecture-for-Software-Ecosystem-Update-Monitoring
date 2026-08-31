@@ -328,6 +328,12 @@ def run(cfg: EvalConfig) -> str:
             t0 = time.time()
             try:
                 out = g.generate(query)
+            except corpus_snapshot.CorpusMiss:
+                # A strict run asked for a document the snapshot does not hold.
+                # Recording that as an error row would defeat the point of
+                # strictness: the run would finish and report numbers built on
+                # a corpus that silently differed between arms.
+                raise
             except Exception as e:  # noqa: BLE001
                 out = {"answer": f"[system error: {e}]", "docs": [], "self_quality": None}
             out["latency_s"] = round(time.time() - t0, 2)

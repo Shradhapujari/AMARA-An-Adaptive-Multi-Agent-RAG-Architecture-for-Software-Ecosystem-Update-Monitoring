@@ -282,3 +282,21 @@ def test_every_cli_flag_reaches_the_config(monkeypatch):
         assert name in fields, f"{name} is not a config field"
         assert getattr(cfg, name) == expected, f"--{name} never reached the config"
     assert cfg.generators == ["marag"]
+
+
+def test_a_strict_corpus_miss_stops_the_run_rather_than_becoming_an_error_row(harness):
+    """
+    run_eval turns a generator exception into an "[system error: ...]" row so one
+    broken system cannot kill a long run. CorpusMiss must not be absorbed that
+    way: a strict run exists precisely so that a missing document stops the run
+    instead of being reported as a result.
+    """
+    import corpus_snapshot
+
+    class Exploding(StubGen):
+        def generate(self, query):
+            raise corpus_snapshot.CorpusMiss("doc not in snapshot")
+
+    harness.install([Exploding("a")])
+    with pytest.raises(corpus_snapshot.CorpusMiss):
+        R.run(harness.cfg())

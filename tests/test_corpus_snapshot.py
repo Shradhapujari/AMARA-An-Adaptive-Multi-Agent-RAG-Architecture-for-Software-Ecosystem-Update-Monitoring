@@ -15,6 +15,8 @@ import os
 import sys
 import urllib.request
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import corpus_snapshot  # noqa: E402
@@ -343,3 +345,92 @@ def test_the_original_exception_still_reaches_the_caller_while_recording(tmp_pat
             raise AssertionError("exception was swallowed")
         except ValueError:
             pass
+
+
+# ── strict replay ────────────────────────────────────────────────────────
+
+def test_strict_serves_recorded_documents_exactly_like_replay(tmp_path, monkeypatch):
+    import requests
+
+    monkeypatch.setattr(requests, "get",
+                        lambda url, **kw: FakeResponse(200, b'{"data":["rec"]}'))
+    with _snap(tmp_path, "record"):
+        requests.get("https://releasetrain.io/api/v/", params={"q": "firefox"})
+
+    def must_not_be_called(url, **kw):
+        raise AssertionError("strict replay hit the network for a recorded doc")
+
+    monkeypatch.setattr(requests, "get", must_not_be_called)
+    snap = _snap(tmp_path, "strict")
+    with snap:
+        r = requests.get("https://releasetrain.io/api/v/", params={"q": "firefox"})
+    assert r.json() == {"data": ["rec"]}
+    assert snap.stats()["hits"] == 1
+
+
+def test_strict_refuses_to_fetch_a_document_it_never_recorded(tmp_path, monkeypatch):
+    """
+    The failure `replay` allows: one arm reads a document live that the other
+    arms never saw, and the run reports a difference that is really corpus
+    drift. Under strict the run stops instead.
+    """
+    import requests
+
+    monkeypatch.setattr(requests, "get",
+                        lambda url, **kw: FakeResponse(200, b'{"data":["live"]}'))
+    snap = _snap(tmp_path, "strict")
+    with snap:
+        with pytest.raises(corpus_snapshot.CorpusMiss) as e:
+            requests.get("https://releasetrain.io/api/v/", params={"q": "new"})
+    assert "not in the snapshot" in str(e.value)
+
+
+def test_strict_still_lets_model_calls_through(tmp_path, monkeypatch):
+    """
+    Strictness applies to documents, not to the model. Arms legitimately make
+    different model calls -- the embedding reranker calls Ollama and the `none`
+    arm does not -- and killing the run for that would make the ablation
+    unrunnable, which is why `replay` is lenient in the first place.
+    """
+    def fake_urlopen(req, *a, **kw):
+        return FakeUrlResponse(200, b'{"embedding":[0.1]}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    snap = _snap(tmp_path, "strict")
+    with snap:
+        resp = urllib.request.urlopen(
+            urllib.request.Request("http://localhost:11434/api/embeddings",
+                                   data=b'{"prompt":"x"}'))
+        assert b"embedding" in resp.read()
+    st = snap.stats()
+    assert st["misses"] == 1 and st["corpus_misses"] == 0
+
+
+def test_strict_urlopen_refuses_an_unrecorded_document(tmp_path, monkeypatch):
+    def fake_urlopen(req, *a, **kw):
+        return FakeUrlResponse(200, b"{}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    snap = _snap(tmp_path, "strict")
+    with snap:
+        with pytest.raises(corpus_snapshot.CorpusMiss):
+            urllib.request.urlopen(
+                urllib.request.Request("https://releasetrain.io/api/v/"))
+
+
+def test_a_strict_run_that_finishes_is_frozen_by_construction(tmp_path):
+    snap = _snap(tmp_path, "strict")
+    st = snap.stats()
+    assert st["strict"] is True and st["frozen"] is True
+
+
+def test_activate_accepts_strict_and_rejects_nonsense(tmp_path):
+    snap = corpus_snapshot.activate(f"strict:{tmp_path}")
+    try:
+        assert snap.mode == "strict"
+    finally:
+        snap.stop()
+    with pytest.raises(ValueError):
+        corpus_snapshot.activate("replayy:/tmp/x")
+    with pytest.raises(ValueError):
+        corpus_snapshot.activate("no-colon")
