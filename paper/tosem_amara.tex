@@ -1674,30 +1674,16 @@ per-question latency of the baseline (19.7\,s versus 9.6\,s). This reflects the
 rewriter's generation call, the evaluator pass, and the additional retrieval
 calls the union incurs.
 
-\subsection{Summary of Findings}\label{sec:results-summary}
+\subsection{Observations Carried Over From the Earlier Evaluation}
+\label{sec:carried-over}
 
-\begin{enumerate}
-  \item The bespoke retrieval-quality score and standard IR metrics order the
-  two architectures oppositely on the same data (Table~\ref{tab:inversion}).
-  \item The multi-agent pipeline's deficit under IR metrics was caused by
-  retrieval, not ranking: 22 of 23 relevant documents were never retrieved,
-  and three reranker generations could not recover them
-  (Table~\ref{tab:ranking-ablation}, panel~(a)). Once both phrasings are
-  retrieved, even the original weak ranking function recovers most of the
-  deficit, and which phrasing is ranked against adds little
-  (panel~(b)).
-  \item Issuing both the original and rewritten phrasings and unioning the
-  candidate pools removes the deficit, and the remedy holds on a
-  100-question multi-ecosystem benchmark, where the fetch-time loss falls from
-  96\% to 12\%.
-  \item With both defects repaired and the synthesis model held constant, the
-  multi-agent architecture \emph{matches} the single-agent baseline on retrieval
-  and on faithfulness, at roughly twice the latency
-  (Tables~\ref{tab:scaled-retrieval} and~\ref{tab:scaled-answer}). We do not
-  find evidence that decomposition improves retrieval quality in this domain.
-  \item A substantial apparent faithfulness gap between the two architectures
-  was an artifact of answer format rather than answer content.
-\end{enumerate}
+The remainder of this section reports measurements from the evaluation described
+in the conference version. They are retained because they do not depend on the
+architecture comparison and are not affected by the corrections above: they
+concern how the system behaves, not whether it beats a baseline. Where a
+measurement has been weakened or qualified by what Sections~\ref{sec:two-metrics}
+to~\ref{sec:scaled-eval} establish, that is stated at the point it appears
+rather than left for the reader to notice.
 
 \subsection{Answer Accuracy}
 
@@ -1714,6 +1700,21 @@ answers. Across these questions, the system did not generate any
 unsupported version numbers, release dates, or software update claims.
 All version-specific information appearing in generated answers could be
 traced to retrieved release notes or other retrieved documents.
+
+Two things about that count need saying, because taken alone it reads more
+favourably than the evidence supports. It is a lenient scoring: ``partially
+correct'' awards credit for an answer that retrieves the right product while
+getting the version, the date, or the affected component wrong, and the
+version is usually the whole question. Under the deterministic scoring used in
+Section~\ref{sec:scaled-eval} --- which labels a prediction naming the right
+product but the wrong version as incorrect rather than partial --- correctness on
+questions carrying a reference answer is between 0.30 and 0.37 for every arm,
+including the single-agent baseline. The two measurements are not in conflict;
+they are the same behaviour scored leniently and strictly, and the strict figure
+is the one to carry forward. What survives from this subsection is the narrower
+claim, which the strict scoring does not contradict: version-specific
+information in generated answers was traceable to a retrieved document, so the
+errors are retrieval and selection errors rather than fabrications.
 
 Figure~\ref{fig:siri_example} presents a representative software update
 question. The question concerns Siri behavior following the iOS~26.4
@@ -2124,6 +2125,31 @@ retrieval, evaluation, and answer synthesis across multiple document
 sources. Retrieved documents were incorporated into generated answers
 only after evaluation. Detailed execution traces are omitted due to
 space constraints.
+
+\subsection{Summary of Findings}\label{sec:results-summary}
+
+\begin{enumerate}
+  \item The bespoke retrieval-quality score and standard IR metrics order the
+  two architectures oppositely on the same data (Table~\ref{tab:inversion}).
+  \item The multi-agent pipeline's deficit under IR metrics was caused by
+  retrieval, not ranking: 22 of 23 relevant documents were never retrieved,
+  and three reranker generations could not recover them
+  (Table~\ref{tab:ranking-ablation}, panel~(a)). Once both phrasings are
+  retrieved, even the original weak ranking function recovers most of the
+  deficit, and which phrasing is ranked against adds little
+  (panel~(b)).
+  \item Issuing both the original and rewritten phrasings and unioning the
+  candidate pools removes the deficit, and the remedy holds on a
+  100-question multi-ecosystem benchmark, where the fetch-time loss falls from
+  96\% to 12\%.
+  \item With both defects repaired and the synthesis model held constant, the
+  multi-agent architecture \emph{matches} the single-agent baseline on retrieval
+  and on faithfulness, at roughly twice the latency
+  (Tables~\ref{tab:scaled-retrieval} and~\ref{tab:scaled-answer}). We do not
+  find evidence that decomposition improves retrieval quality in this domain.
+  \item A substantial apparent faithfulness gap between the two architectures
+  was an artifact of answer format rather than answer content.
+\end{enumerate}
 
 \section{Discussion}\label{sec:discussion}
 

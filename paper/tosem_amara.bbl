@@ -207,14 +207,14 @@ Retrieved August 2026 from \tempurl}
 \newblock
 
 
-\bibitem[Cook et~al\mbox{.}(2026)]%
+\bibitem[Cook et~al\mbox{.}(2025)]%
         {cook2025rag}
 \bibfield{author}{\bibinfo{person}{T. Cook} {et~al\mbox{.}}}
-  \bibinfo{year}{2026}\natexlab{}.
+  \bibinfo{year}{2025}\natexlab{}.
 \newblock \showarticletitle{Retrieval Augmented Generation ({RAG}) for Fintech:
   Agentic Design and Evaluation}.
 \newblock \bibinfo{journal}{\emph{arXiv preprint arXiv:2510.25518}}
-  (\bibinfo{year}{2026}).
+  (\bibinfo{year}{2025}).
 \newblock
 \urldef\tempurl%
 \url{https://arxiv.org/abs/2510.25518}
@@ -259,6 +259,7 @@ Retrieved August 2026 from \tempurl}
   International Conference on Theory of Information Retrieval}}.
   \bibinfo{pages}{39--50}.
 \newblock
+\href{https://doi.org/10.1145/3578337.3605136}{doi:\nolinkurl{10.1145/3578337.3605136}}
 
 
 \bibitem[Ferrari~Dacrema et~al\mbox{.}(2019)]%
@@ -787,6 +788,7 @@ Retrieved August 2026 from \tempurl}
   \bibinfo{volume}{1}, \bibinfo{number}{1} (\bibinfo{year}{2025}),
   \bibinfo{pages}{29--46}.
 \newblock
+\href{https://doi.org/10.54195/irrj.19625}{doi:\nolinkurl{10.54195/irrj.19625}}
 
 
 \bibitem[Sun et~al\mbox{.}(2023)]%
@@ -820,9 +822,9 @@ Retrieved August 2026 from \tempurl}
   \bibinfo{person}{N. Craswell}, {and} \bibinfo{person}{B. Mitra}.}
   \bibinfo{year}{2024}\natexlab{}.
 \newblock \showarticletitle{Large Language Models Can Accurately Predict
-  Searcher Preferences}.
-\newblock \bibinfo{journal}{\emph{arXiv preprint arXiv:2309.10621}}
-  (\bibinfo{year}{2024}).
+  Searcher Preferences}. In \bibinfo{booktitle}{\emph{Proceedings of the 47th
+  International {ACM} {SIGIR} Conference on Research and Development in
+  Information Retrieval}}.
 \newblock
 \urldef\tempurl%
 \url{https://arxiv.org/abs/2309.10621}
