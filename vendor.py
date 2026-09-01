@@ -54,6 +54,7 @@ __all__ = [
     "is_release_record",
     "advisory_id",
     "describe_record",
+    "doc_kind",
     "filter_by_vendor",
     "filter_community",
     "subreddit_vendor",
@@ -319,6 +320,33 @@ def classify_record(row: Dict) -> str:
 def is_release_record(row: Dict) -> bool:
     """True when the row describes a version that actually shipped."""
     return classify_record(row) == "release"
+
+
+def doc_kind(row: Dict) -> str:
+    """`"cve"`, `"community"` or `"release"` — the kind `intent.citable_kinds` names.
+
+    `classify_record` answers a narrower question (is this row a shipped
+    version or an advisory) and defaults to `"release"`, which is right for a
+    release-feed row and wrong for a Reddit post. This is the mapping a
+    citability filter needs: filtering on `classify_record` alone keeps
+    community posts as though they were releases.
+    """
+    if classify_record(row) == "advisory":
+        return "cve"
+
+    source = str(row.get("source") or "").lower()
+    url = str(row.get("url") or "").lower()
+
+    # `source` is checked before anything else because `RetrieverAgent` reuses
+    # the `subreddit` field to carry a release's *brand* ("torvalds"), so a
+    # subreddit test run first labels every kernel release a community post.
+    if "release" in source or "github" in source:
+        return "release"
+    if "reddit" in source or "reddit.com" in url or "news" in source:
+        return "community"
+    if row.get("version") or row.get("versionNumber"):
+        return "release"
+    return "community"
 
 
 _CVE_RE = re.compile(r"CVE-\d{4}-\d{4,}", re.I)

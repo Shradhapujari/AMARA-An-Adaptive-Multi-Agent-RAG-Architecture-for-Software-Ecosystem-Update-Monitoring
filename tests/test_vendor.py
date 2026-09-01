@@ -19,6 +19,7 @@ from vendor import (  # noqa: E402
     VendorMatch,
     advisory_id,
     describe_record,
+    doc_kind,
     classify_record,
     detect_vendors,
     disambiguate,
@@ -217,3 +218,34 @@ def test_release_has_no_advisory_id():
 def test_advisory_without_a_cve_id_still_names_itself_honestly():
     row = {"product": "Linux", "version": "1.2.3", "isCve": True}
     assert describe_record(row) == "Linux advisory (affects Linux 1.2.3)"
+
+
+# ── Document kind, for intent-based citability ───────────────────────────
+
+def test_release_feed_row_is_a_release_even_though_it_carries_a_subreddit():
+    # RetrieverAgent reuses the `subreddit` field to carry a release's brand
+    # ("torvalds"). Testing subreddit before source labelled every kernel
+    # release a community post, which emptied the release pool.
+    row = {"title": "torvalds v7.1.0 — Linux 7.2-rc4", "subreddit": "torvalds",
+           "source": "vendor_releases", "url": "https://github.com/torvalds/linux"}
+    assert doc_kind(row) == "release"
+
+
+def test_reddit_row_is_community():
+    row = {"title": "Chrome broke", "subreddit": "chrome", "source": "vendor_reddit",
+           "url": "https://reddit.com/r/chrome/comments/x"}
+    assert doc_kind(row) == "community"
+
+
+def test_advisory_row_is_cve_whatever_its_source():
+    row = {"title": "Linux v4.0.0", "source": "vendor_releases",
+           "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-80662"}
+    assert doc_kind(row) == "cve"
+
+
+def test_doc_kind_matches_the_names_citable_kinds_uses():
+    import intent
+    kinds = {doc_kind({"source": "vendor_releases", "url": "https://github.com/x"}),
+             doc_kind({"source": "vendor_reddit", "url": "https://reddit.com/x"}),
+             doc_kind({"source": "cve", "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-1"})}
+    assert kinds <= set(intent.citable_kinds(intent.classify("hello")))

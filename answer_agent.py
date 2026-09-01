@@ -34,6 +34,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+import vendor
+
 __all__ = [
     "Evidence",
     "collect_evidence",
@@ -123,15 +125,20 @@ def collect_evidence(results: Dict, per_kind: int = 4) -> List[Evidence]:
     ev: List[Evidence] = []
 
     for r in (results.get("releases") or [])[:per_kind]:
-        product = r.get("product", "") or "release"
-        version = r.get("version", "")
+        # An advisory row is named by its CVE id, not by its versionNumber:
+        # that field holds the *affected* version, and citing
+        # "Linux v25.642087.0" as a release invites the reader to believe a
+        # version by that name shipped. `vendor.describe_record` decides which
+        # naming a row gets, from the row itself.
+        advisory = vendor.classify_record(r) == "advisory"
+        name = vendor.describe_record(r) or (r.get("product", "") or "release")
         date = _iso(r.get("date"))
-        name = f"{product} v{version}".strip().rstrip("v").strip() if version else product
-        label = f"Release Notes - {name}" + (f", {date}" if date else "")
+        prefix = "Security Advisory" if advisory else "Release Notes"
+        label = f"{prefix} - {name}" + (f", {date}" if date else "")
         ev.append(Evidence(
-            label=label, kind="release", title=name,
+            label=label, kind="cve" if advisory else "release", title=name,
             detail=_clean(r.get("notes", "")), url=r.get("url", ""), date=date,
-            security="SECURITY" in (r.get("security") or []),
+            security=advisory or "SECURITY" in (r.get("security") or []),
         ))
 
     for c in (results.get("cve") or [])[:per_kind]:

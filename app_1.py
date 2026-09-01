@@ -31,6 +31,8 @@ from temporal import resolve_temporal, matches_window
 from fetch_union import union_fetch, product_terms
 from answer_agent import present_answer
 from store import open_store, caching_fetch
+from grounding import ground
+import vendor
 
 # ── PAGE CONFIG ──────────────────────────────────────────
 st.set_page_config(
@@ -203,6 +205,21 @@ def fetch_release_notes(query: str, limit: int = 5) -> list:
         if resp.status_code == 200:
             data = resp.json()
             versions = data.get("versions", [])
+            # The endpoint ignores `limit` and returns the whole product's
+            # history newest-first, so the slice below is ours. Taking the
+            # first `limit` rows takes only advisories: measured 2026-09-01,
+            # q=Linux returns 606 rows of which 449 are CVE records dated
+            # 2026-08-28, while the newest shipped kernel is dated 2026-07-19.
+            # Every release is therefore behind every advisory, and any slice
+            # short of ~450 rows contains no release at all.
+            #
+            # So take `limit` of each kind rather than `limit` of the whole.
+            # The pool then carries both, and the intent filter downstream
+            # decides which may be cited -- a decision that needs both kinds
+            # present to be a decision.
+            advisories = [v for v in versions if v.get("isCve")]
+            releases = [v for v in versions if not v.get("isCve")]
+            versions = releases[:limit] + advisories[:limit]
             return [{
                 "product":   v.get("versionProductName", ""),
                 "version":   v.get("versionNumber", ""),
@@ -213,7 +230,7 @@ def fetch_release_notes(query: str, limit: int = 5) -> list:
                 "security":  v.get("classification", {}).get("securityType", []),
                 "breaking":  v.get("classification", {}).get("breakingType", []),
                 "is_cve":    v.get("isCve", False),
-            } for v in versions[:limit]]
+            } for v in versions]
     except Exception as e:
         return [{"product": f"API unavailable: {e}", "version": "", "date": "", "notes": "", "channel": "", "url": "", "security": [], "breaking": [], "is_cve": False}]
     return []
@@ -291,9 +308,16 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
     # deictic term first means the rewriter, the fetch and the ranker all see
     # the absolute date instead of a token that cannot match.
     t0 = time.time()
-    temporal = resolve_temporal(query)
+    # One call, and it is the same call the evaluation's `single_agent_grounded`
+    # arm makes: temporal grounding, vendor detection from the /api/c/names
+    # catalog, and intent classification. Keeping the demo and the measured arm
+    # on one code path is the point -- a demo that grounds differently from the
+    # thing being measured is not a demo of it.
+    g = ground(query)
+    temporal = g.temporal
     results["temporal"] = temporal
-    results["grounded_query"] = temporal.query
+    results["grounding"] = g
+    results["grounded_query"] = g.rewritten
     results["timing"]["temporal"] = round(time.time() - t0, 2)
     grounded = temporal.query
 
@@ -320,8 +344,14 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
     # The release endpoint matches product names, so a sentence retrieves
     # nothing from it however well phrased. Fetch the product term too; the
     # sentence phrasings still run, so nothing they would have found is lost.
-    release_phrasings = phrasings + [
-        t for t in product_terms(temporal.stripped or query) if t not in phrasings]
+    # Catalog-detected products lead, because /api/v/ matches `q` against
+    # product names and nothing else: measured 2026-09-01, q="linux" returns
+    # 606 rows and q="linux version" returns 0. product_terms stays as the
+    # fallback for a question naming something the catalog does not hold.
+    release_phrasings = g.vendor_names + [p for p in phrasings
+                                          if p not in g.vendor_names]
+    release_phrasings += [t for t in product_terms(temporal.stripped or query)
+                          if t not in release_phrasings]
     results["release_phrasings"] = release_phrasings
 
     # Each agent's fetch is wrapped so its results are written to the store and
@@ -333,11 +363,20 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
     release_fetch   = caching_fetch(db, "release",   fetch_release_notes)
     cve_fetch       = caching_fetch(db, "cve",       fetch_cve_data)
 
+    # Both pools are fetched deeper than they are shown, because the filters
+    # in step 4b run *after* the fetch and cutting to `limit` first leaves them
+    # nothing to keep. /api/v/ returns its rows newest-first and 449 of the 606
+    # Linux rows are advisories filed daily, so the first 5 are always
+    # advisories and a release question filtered down to an empty pool. Same
+    # truncate-before-filter shape as the bug fixed in fetch_vendor_releases.
+    pool_limit = max(limit * 10, 50)
+
     # Step 2 — Community Agent
     if show_steps:
         with st.spinner("💬 Community Agent — fetching Reddit feedback..."):
             t0 = time.time()
-            results["community"] = union_fetch(community_fetch, phrasings, limit, temporal)
+            results["community"] = union_fetch(community_fetch, phrasings,
+                                               pool_limit, temporal)
             results["timing"]["community"] = round(time.time()-t0, 1)
 
     # Step 3 — Release Notes Agent
@@ -345,7 +384,7 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
         with st.spinner("📦 Release Notes Agent — fetching live releases..."):
             t0 = time.time()
             results["releases"] = union_fetch(release_fetch, release_phrasings,
-                                              limit, temporal)
+                                              pool_limit, temporal)
             results["timing"]["releases"] = round(time.time()-t0, 1)
 
     # Step 4 — CVE Agent
@@ -354,6 +393,39 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
             t0 = time.time()
             results["cve"] = union_fetch(cve_fetch, phrasings, limit, temporal)
             results["timing"]["cve"] = round(time.time()-t0, 1)
+
+    # Step 4b — Vendor and record-type filter
+    # This is where "Linux v25.642087.0" is stopped. /api/v/?q=Linux returns
+    # 606 rows of which 449 are NVD CVE records whose versionNumber is an
+    # affected-version string, not a version that shipped; the pipeline used to
+    # sort them all by date and report the newest, which is always an advisory.
+    # For a release question those rows are not weak evidence, they are wrong
+    # evidence, so intent decides whether they may be cited at all.
+    #
+    # Filters never empty a pool: an answer over imperfect documents beats an
+    # answer over none, and a demo that returns nothing teaches the reader
+    # nothing about what it fixed.
+    t0 = time.time()
+    if g.vendors:
+        scoped = vendor.filter_by_vendor(results["releases"], g.vendors)
+        results["releases"] = scoped or results["releases"]
+        scoped_com = vendor.filter_community(results["community"], g.vendors,
+                                             terms=g.terms)
+        results["community"] = scoped_com or results["community"]
+
+    if "cve" not in g.citable_kinds:
+        shipped = [r for r in results["releases"] if vendor.is_release_record(r)]
+        results["advisories_excluded"] = len(results["releases"]) - len(shipped)
+        results["releases"] = shipped or results["releases"]
+    else:
+        results["advisories_excluded"] = 0
+
+    # Only now cut to what the user asked to see. Everything above ranked and
+    # filtered over the deep pool.
+    results["community"] = results["community"][:limit]
+    results["releases"] = results["releases"][:limit]
+    results["cve"] = results["cve"][:limit]
+    results["timing"]["filter"] = round(time.time() - t0, 2)
 
     # Step 5 — RLAIF Evaluator
     results["evaluation"] = evaluate_results(
@@ -519,6 +591,41 @@ if run_btn and query:
                    "(Version words like “latest” are left alone on purpose: they "
                    "are ordinal over releases, not a date.)")
 
+    # ── VENDOR + INTENT GROUNDING RESULT ──────────────────
+    gq = results.get("grounding")
+    if gq is not None:
+        st.markdown("### 🏷 Vendor & Intent Grounder")
+        vg1, vg2 = st.columns(2)
+        with vg1:
+            if gq.vendors:
+                st.success("**Products:** " + ", ".join(
+                    f"“{v.matched}” → `{v.name}`" for v in gq.vendors))
+            else:
+                st.warning("**Products:** none matched the catalog — "
+                           "retrieval is not vendor-scoped for this question.")
+        with vg2:
+            if gq.intent and gq.intent.confident:
+                st.success(f"**Intent:** {gq.intent.describe()}")
+            else:
+                st.warning(f"**Intent:** {gq.intent.describe() if gq.intent else 'not classified'}")
+        if gq.rewritten != gq.original:
+            st.info(f"**Question as grounded:** {gq.rewritten}")
+        excluded = results.get("advisories_excluded", 0)
+        if excluded:
+            st.caption(
+                f"{excluded} CVE advisory row(s) excluded from the release pool. "
+                "A CVE record's version field is the *affected* version, not a "
+                "version that shipped — citing one as a release is what produced "
+                "answers like “Linux v25.642087.0”.")
+        elif "cve" in gq.citable_kinds:
+            st.caption("Security question — advisories are kept and cited as "
+                       "advisories, named by their CVE id rather than by the "
+                       "affected-version string.")
+        if gq.needs_clarification:
+            st.error("No product and no clear intent were found in this "
+                     "question. The answer below is drawn from an unscoped "
+                     "search — naming a product would make it specific.")
+
     # ── QUERY REWRITING RESULT ────────────────────────────
     st.markdown("### 🔄 Query Rewriter Agent")
     rw_col1, rw_col2 = st.columns(2)
@@ -638,6 +745,17 @@ if run_btn and query:
                 "resolved": [{"matched": a, "as": b} for a, b in tr.terms],
                 "window": [str(tr.start), str(tr.end)] if tr.window else None,
             } if tr is not None else None
+            # Same reason: GroundedQuestion is a dataclass holding further
+            # dataclasses. Show what it decided, not the object.
+            raw["grounding"] = {
+                "rewritten": gq.rewritten,
+                "vendors": gq.vendor_names,
+                "intent": gq.intent.label if gq.intent else None,
+                "intent_scores": gq.intent.scores if gq.intent else None,
+                "citable_kinds": list(gq.citable_kinds),
+                "retrieval_phrasings": gq.retrieval_phrasings,
+                "needs_clarification": gq.needs_clarification,
+            } if gq is not None else None
             st.json(raw)
 
     # ── FINAL GROUNDED ANSWER ─────────────────────────────

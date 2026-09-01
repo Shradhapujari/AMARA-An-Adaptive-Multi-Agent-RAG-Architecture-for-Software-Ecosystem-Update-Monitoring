@@ -49,7 +49,13 @@ def _no_env(monkeypatch):
 def test_evidence_labels_carry_source_name_and_date():
     ev = collect_evidence(RESULTS)
     labels = [e.label for e in ev]
-    assert "Release Notes - Linux v6.18.21, 2026-08-28" in labels
+    # The Linux row in RESULTS is advisory-shaped -- its notes are a kernel CVE
+    # description -- so it is now labelled as one. Calling it "Release Notes -
+    # Linux v6.18.21" told the reader a version by that name shipped; the
+    # number in an advisory row is the *affected* version. Expectation changed
+    # deliberately with vendor.classify_record.
+    assert "Security Advisory - Linux advisory (affects Linux 6.18.21), 2026-08-28" in labels
+    assert "Release Notes - Django v5.2.1, 2026-08-20" in labels
     assert "CVE Feed - r/netsec, 2026-08-30" in labels
     assert "Community - r/linux, 2026-08-31" in labels
 
@@ -66,8 +72,13 @@ def test_deterministic_paragraph_cites_every_kind():
     ev = collect_evidence(RESULTS)
     text = deterministic_paragraph("Any critical Linux updates today?", ev,
                                    window_note="Aug 31, 2026")
-    assert "[Release Notes - Linux v6.18.21, 2026-08-28]" in text
-    assert "[CVE Feed - r/netsec, 2026-08-30]" in text
+    # The Linux row is advisory-shaped, so it joins the advisory group rather
+    # than the release group: "every kind" is now release, advisory, community.
+    # The paragraph names the lead advisory and counts the rest, so the netsec
+    # item is counted ("2 CVE discussion(s)") rather than cited by name.
+    assert "[Release Notes - Django v5.2.1, 2026-08-20]" in text
+    assert "[Security Advisory - Linux advisory (affects Linux 6.18.21), 2026-08-28]" in text
+    assert "2 CVE discussion(s)" in text
     assert "[Community - r/linux, 2026-08-31]" in text
     assert "Aug 31, 2026" in text
     # One paragraph, not a bullet template.
@@ -124,7 +135,7 @@ def _patch_client(monkeypatch, client):
 
 def test_llm_path_used_when_a_model_is_available(monkeypatch):
     _no_env(monkeypatch)
-    stub = _StubClient("Linux shipped a kernel security fix [Release Notes - Linux v6.18.21, 2026-08-28].")
+    stub = _StubClient("Linux shipped a kernel security fix [Release Notes - Django v5.2.1, 2026-08-20].")
     _patch_client(monkeypatch, stub)
     out = present_answer("Any critical Linux updates today?", RESULTS,
                          model_spec="stub:model")
@@ -140,7 +151,9 @@ def test_unavailable_model_falls_back_and_names_the_reason(monkeypatch):
     out = present_answer("q", RESULTS, model_spec="stub:model")
     assert out.mode == "rule-based"
     assert "not reachable" in out.note
-    assert "[Release Notes - Linux v6.18.21, 2026-08-28]" in out.text
+    # Django is the only genuine release row in RESULTS; the Linux row is an
+    # advisory and is cited as one.
+    assert "[Release Notes - Django v5.2.1, 2026-08-20]" in out.text
 
 
 def test_transport_failure_falls_back(monkeypatch):
