@@ -11,30 +11,78 @@
 ## TL;DR
 
 - **+17.2%** retrieval quality over a single-agent RAG baseline on the paper's own retrieval-quality score (paired *t*-test, *t*(49) = 2.32, *p* = 0.020) — **but see the correction below**.
-- **+9.3%** additional improvement from self-improvement memory across successive queries — no human feedback, no retraining (Cohen's *d* = 0.83).
+- **+9.3%** additional improvement from self-improvement memory across successive queries — no human feedback, no retraining (Cohen's *d* = 0.83) — **but measured against a drifting corpus; see the caveat under Results**.
 - **Zero hallucinated version numbers** across version-specific evaluation; every claim traces back to a retrieved source.
 - Runs **fully locally** on Apple Silicon (24 GB unified memory) via Ollama. No closed-model API calls.
 
-> ### ⚠️ Correction in progress
+> ### ⚠️ Correction — the headline above did not survive re-scoring
 >
 > Re-scored with standard IR metrics (nDCG@k / Recall@k / MRR over pooled judged
 > relevance) rather than the paper's bespoke keyword-overlap score, the
-> multi-agent pipeline **did not** beat the single-agent baseline — it lost badly
-> (nDCG@3 0.145 vs 0.765, n=10).
+> multi-agent pipeline **did not** beat the single-agent baseline — it lost
+> badly (nDCG@3 **0.145 vs 0.765**, paired deficit 0.620, exact Wilcoxon
+> *p* = 0.016, n = 10).
 >
 > The cause turned out to be a real defect, not a metric artifact: the Query
 > Rewriter's output *replaced* the user's wording at every live endpoint, so
 > **22 of the 23** relevant documents the baseline retrieved were never fetched
-> at all. Reranking cannot recover a document that was never retrieved.
+> at all. Reranking cannot recover a document that was never retrieved — which
+> is why three successively stronger rerankers lifted MRR from 0.250 to 0.625
+> while nDCG@3 stayed near 0.19.
 >
 > With the rewrite made additive (both phrasings searched, pools unioned) and
-> ranking scored against the original question, marag reaches nDCG@3 0.973 —
-> **parity with the baseline (0.988), not an improvement**, at roughly 2× the
-> latency.
+> ranking scored against the original question, nDCG@3 goes **0.188 → 0.765** in
+> one step, and on the 100-question benchmark the share of the baseline's
+> relevant documents missing from the candidate pool falls from **96% to 12%**.
 >
-> Full chain of measurements, confounds, and what it means for the paper:
-> [`eval_harness/FINDINGS.md`](eval_harness/FINDINGS.md). The 300-question
-> multi-ecosystem benchmark exists to settle this at a defensible sample size.
+> That reaches **parity, not superiority**: with both defects repaired and the
+> synthesis model held constant, marag scores nDCG@3 **0.859 against the
+> baseline's 0.863** (n = 100) at roughly twice the latency (23 s vs 12 s per
+> question). Decomposition per se is not what produced the original +17.2%.
+>
+> An apparent 0.23 faithfulness deficit for the multi-agent system also proved
+> to be an artifact of answer **format** — a structured template judged against
+> fluent prose — and vanished when the same retrieval was synthesized through
+> the baseline's own prompt (0.926 vs 0.931).
+>
+> Full chain of measurements, confounds, and superseded readings:
+> [`eval_harness/FINDINGS.md`](eval_harness/FINDINGS.md). Every number maps to a
+> run id in [`results/PROVENANCE.md`](results/PROVENANCE.md).
+>
+> Two figures that were reported earlier and should **not** be reintroduced:
+> nDCG@3 **0.973** (a pre-qrels-cache-keyfix artifact; post-fix and
+> reproducibly, 0.765) and the scaled tables at n = 96 (a stalled run that has
+> since completed at n = 100).
+
+---
+
+## Status
+
+| | |
+|---|---|
+| **Live demo** | <https://software-update-questions.streamlit.app/> — public, no key required |
+| **Paper** | Retargeted from the AgenticSE '26 workshop version and submitted to **TOSEM**, special section on Human–AI Collaboration in Software Engineering (1 September 2026). Source: `paper/tosem_amara.tex` |
+| **Framing** | A negative result plus its remedy, not an improvement claim |
+| **Tests** | 477 offline tests, no network required |
+| **Slides** | [`MultiAgentRAG_Framework_Sep2026.pptx`](MultiAgentRAG_Framework_Sep2026.pptx) — architecture, the negative result, the repair, the deployed app |
+
+---
+
+## Documentation
+
+The [**wiki**](https://github.com/Shradhapujari/Adaptive-Multi-Agent-RAG-Architecture-for-Software-Ecosystem-Update-Monitoring/wiki)
+carries the working documentation — its source is in [`wiki/`](wiki/), so a
+documentation change is reviewable in a pull request next to the code it
+describes.
+
+| Page | What it covers |
+|---|---|
+| [Architecture](wiki/Architecture.md) | The agents, the pipeline, the feedback loop, and the two agents added after the evaluation |
+| [Evaluation and Findings](wiki/Evaluation-and-Findings.md) | How the negative result was found, localized and repaired; every number and its provenance |
+| [Running the System](wiki/Running-the-System.md) | Setup, the demo, the CLI, and every environment variable that changes behaviour |
+| [Benchmarks and Data](wiki/Benchmarks-and-Data.md) | Question sets, live sources, rebuilding, and freezing the corpus |
+| [Deployment](wiki/Deployment.md) | The Streamlit deployment and what degrades without a model |
+| [Roadmap and Open Questions](wiki/Roadmap-and-Open-Questions.md) | What is unfinished, what is unproven, and what would settle it |
 
 ---
 
@@ -200,18 +248,84 @@ corrupt. Rows that cannot be attributed confidently are dropped, and every
 question carries a `source` field so mined and templated items stay
 distinguishable.
 
+### Evaluation at scale
+
+The 10-question ground-truth set is directional only. The 100-question
+benchmark (`data/benchmark_100.json`, 21 ecosystems) is where the repaired
+system was measured:
+
+| Measure | Value |
+|---|---|
+| Baseline-relevant documents missing from the candidate pool | 96% → **12%** after the union fetch |
+| nDCG@3, multi-agent vs single-agent (synthesis model held constant) | 0.859 vs 0.863 — parity |
+| Faithfulness: template answer / prose answer / baseline prose | 0.700 / 0.926 / **0.931** |
+| Mean latency per question, multi-agent vs baseline | ≈ 23 s vs ≈ 12 s |
+
+### Frozen corpora
+
+The live endpoints drift while a run is in progress, so any comparison that has
+to be exact is replayed rather than re-fetched:
+
+```bash
+MARAG_CORPUS=record:data/corpus_snapshot_myrun python -m eval_harness.run_eval ...
+MARAG_CORPUS=replay:data/corpus_snapshot_myrun python -m eval_harness.run_eval ...
+```
+
+Record once, replay for every arm. A warm replay against a shared snapshot can
+backfill it, so give each ablation its own directory rather than reusing one.
+
+### Arms and the ablation ladder
+
+Arms are built to differ by **one** capability at a time — query rewriting,
+union fetch, reranker, answer rendering — so a difference between two of them
+has a single candidate cause. In particular `marag_llm` exists to remove the
+answer-format confound: same multi-agent retrieval, but the answer is
+synthesized through the baseline's own prompt with the same model.
+
+A reimplementation of Self-RAG-style per-passage critiques and CRAG-style
+correction over this retrieval ships in `eval_harness/selfreflective.py`
+(`--generators selfreflective`), with the model held constant. **Its evaluation
+run is incomplete and no results are reported from it.**
+
 ### Tests
 
 ```bash
-python -m pytest tests/ -q      # 191 offline tests, no network required
+python -m pytest tests/ -q      # 477 offline tests, no network required
 ```
+
+Offline in the strict sense: clocks, fetch functions and model clients are all
+injected, so the suite needs neither a network nor a particular date to pass.
 
 
 ---
 
 ## Results
 
-### Retrieval quality by category (50 questions)
+### Standard IR metrics (n = 10 ground-truth set, judge `ollama:llama3.1`)
+
+| System | nDCG@1 | nDCG@3 | MRR | Faithfulness |
+|---|---:|---:|---:|---:|
+| Single-agent baseline | **0.800** | **0.743** | **0.800** | **0.805** |
+| Multi-agent, as published | 0.167 | 0.193 | 0.433 | 0.660 |
+
+Localizing the loss — the same retrieval under three ranking arms, single
+phrasing, then with the union fetch added:
+
+| Configuration | nDCG@3 | MRR |
+|---|---:|---:|
+| substring boost (published behaviour), single phrasing | 0.145 | 0.250 |
+| `bm25`, single phrasing | 0.212 | 0.500 |
+| `embed`, single phrasing | 0.188 | 0.625 |
+| `embed` + union fetch | **0.765** | **1.000** |
+
+Rising MRR under stronger rerankers with a flat nDCG is the signature of a
+*fetch* fault rather than a ranking one. Reranking came first in this project
+and mattered least: adopt the union first.
+
+### Retrieval quality by category (50 questions, the paper's own score)
+
+> Kept for the record. This is the bespoke keyword-overlap score whose ordering
+> the table above inverts.
 
 | Category | Single-Agent | 4-Agent | Improvement |
 |---|---:|---:|---:|
@@ -232,6 +346,11 @@ python -m pytest tests/ -q      # 191 offline tests, no network required
 | Q34–Q50 (late) | 0.826 |
 
 *+9.3% improvement, t(16) = 2.18, p = 0.043, Cohen's d = 0.83.*
+
+> ⚠️ This compares time-ordered tertiles against a **live corpus that drifts
+> during the run**, so adaptation is not separable from drift. Mechanism sound,
+> magnitude unestablished — it needs a frozen snapshot (record/replay above) or
+> an interleaved design.
 
 ### Answer accuracy
 
@@ -372,6 +491,9 @@ Key entry points:
 | `evaluate_v3.py` | Evaluation harness (latest version) |
 | `test_apis.py` | Standalone test of the underlying data-source APIs |
 | `run_all.sh` | Shell script to run the full evaluation pipeline |
+| `eval_harness/` | IR + judge evaluation harness — generators, metrics, benchmarks, providers, findings |
+| `paper/` | TOSEM manuscript source (`tosem_amara.tex`) and its figures |
+| `wiki/` | Source of the GitHub wiki pages (see below) |
 
 Data and results:
 
@@ -381,7 +503,9 @@ Data and results:
 | `eval_50_results_v2.json` | Per-question scores for the 50-question evaluation |
 | `ablation_results.json` | Ablation study results (per-component contribution) |
 | `accuracy_test_results.json`, `accuracy_postfix_results.json` | Answer-accuracy evaluations |
+| `MultiAgentRAG_Framework_Sep2026.pptx` | Current slide deck — architecture, negative result, repair, deployed app |
 | `MultiAgent_Presentation_20thMarch.pptx` | Earlier presentation slides |
+| `results/PROVENANCE.md` | Run id behind every number reported in the paper |
 
 Older / archived versions of the main scripts (`multiagent_rag.py`, `multiagent_rag_v2.py`, `evaluate.py`, `evaluate_v2.py`, `app.py`, etc.) are kept in the repo root for reference and reproducibility.
 
@@ -392,7 +516,7 @@ Older / archived versions of the main scripts (`multiagent_rag.py`, `multiagent_
 We're explicit about these in the paper (§5) — they're real, and good directions to push on:
 
 - **Apple is structurally harder.** Apple doesn't publish to the same release database other vendors do. We added dedicated Apple sources (Developer RSS, CISA KEV, CIRCL CVE) and iOS/Apple synonym expansion, but full coverage requires broader vendor onboarding.
-- **Temporal queries.** *"What was the Linux version on January 1st 2026?"* — the date constraint isn't currently passed to retrieval, so we return the latest version. Fixable.
+- **Temporal queries — now handled, with a caveat.** Relative expressions are resolved to absolute dates before retrieval (`temporal.py`), and the resolved window ranks results rather than filtering them. The caveat is that the release endpoint matches `q` against *product names*, so a date in the query text cannot narrow it — the window is applied after the fetch, and an absolute-date question about a specific past day still depends on that day being inside what the endpoint returns.
 - **Vendor extraction failures** on phrases like *"Synology NAS unreachable after upgrade"* — preprocessing strips domain terms. Future fix: embedding-based vendor matching over the full registry.
 - **Community-source reliability.** Reddit is the weakest link. We require ≥10 comments, ≥3 author replies, quality ≥ 0.3, and separate verified from community sources — but a single popular wrong post can still bias an answer.
 - **Evaluation size.** 50 questions is statistically significant but small. A larger multi-ecosystem benchmark is the next study.
@@ -404,6 +528,12 @@ We're explicit about these in the paper (§5) — they're real, and good directi
 
 - [x] Larger multi-ecosystem benchmark — `data/benchmark_300.json` (300 questions, 24 ecosystems, 60 per category). Built; the full evaluation run against it is the next step.
 - [x] Rerank candidates against the original question rather than the rewrite — closed the retrieval defect described in the correction above.
+- [x] Union fetch — issue both phrasings and union the candidate pools. This, not reranking, is what closed the defect.
+- [x] Temporal grounding before retrieval (`temporal.py`) with window-aware ranking (`fetch_union.py`).
+- [x] Cited prose answers in the demo (`answer_agent.py`), replacing the bullet template.
+- [ ] Finish the 300-question run (it stopped at 68 of 300; `--resume` exists)
+- [ ] Report the self-reflective (Self-RAG / CRAG) baseline arm — implemented, run incomplete
+- [ ] Measure self-improvement against a frozen corpus, so adaptation is separable from corpus drift
 - [ ] Independent judge (`--judge openai:gpt-4o`) to remove the judge/system model-family overlap
 - [ ] Embedding-based vendor matching (replace static alias dictionary)
 - [ ] Learned reward model for the Evaluator (replace heuristic scoring)
