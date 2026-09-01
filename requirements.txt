@@ -11,9 +11,13 @@ pytest==9.1.1
 
 # Demo UI only (app_1.py, DemoMain*.py, marag_app.py -- NOT app.py, which is
 # an unrelated Flask IoT sensor API). app_1.py is the Streamlit deploy target;
-# smoke-tested locally under Python 3.11 + streamlit==1.32.0, loads clean.
-# Its one Ollama call (query rewrite) already degrades to rule-based rewriting
-# on connection failure, so a host with no reachable Ollama (e.g. Streamlit
-# Community Cloud) runs without a crash or a visible error -- just a weaker
-# rewrite.
+# exercised end to end locally under Python 3.11 + streamlit 1.62.0 against the
+# live releasetrain.io endpoints.
+#
+# Both of its model-dependent steps degrade without one: the query rewrite falls
+# back to rule-based expansion, and the Answer Presenter composes its cited
+# paragraph by rule and says so in the UI. So a host with no reachable Ollama and
+# no API key (e.g. Streamlit Community Cloud) runs without a crash or a hidden
+# failure -- just a blunter rewrite and a blunter answer. Temporal grounding
+# (temporal.py) is rule-based by design and needs no model at all.
 streamlit>=1.32.0
