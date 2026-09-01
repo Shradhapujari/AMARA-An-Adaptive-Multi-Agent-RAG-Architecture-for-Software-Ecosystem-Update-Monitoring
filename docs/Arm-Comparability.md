@@ -93,6 +93,48 @@ Reporting A1 → A3 without A1g would attribute the grounding gain to
 coordination. That is precisely the objection the capability table raises, and
 running the extra rung answers it with a number instead of a paragraph.
 
+## A retriever bug the grounding exposed — and what it invalidates
+
+Building the rung above surfaced a defect in the **shared** retriever, which
+means it affected both arms equally and is not a comparability issue — but it
+does change numbers.
+
+`fetch_vendor_releases` in [`multiagent_rag_v3.py`](../multiagent_rag_v3.py)
+ranks its rows with a `canonical_score` whose stated purpose is to demote CVE
+rows and promote the canonical brand; its own comment says it "fixes Linux
+returning openCryptoki instead of torvalds kernel". The sort was dead in
+practice, because the list was cut to `limit` before it ran:
+
+```python
+releases = releases[:limit]          # 10 rows — all advisories
+...
+releases.sort(key=canonical_score)   # nothing left to promote
+```
+
+`/api/c/name/linux` returns its 449 CVE rows ahead of its 157 `torvalds`
+release rows, because advisories are filed daily and kernels are not. So the
+first ten were always advisories, and **the shipped kernel was unreachable**:
+measured 2026-09-01, `RetrieverAgent` returned 0 shipped releases in 40
+retrieved documents for `q=linux`.
+
+Ranking now happens before the cut. After the fix, on the same query:
+
+| | advisories in pool | shipped releases in pool |
+|---|---|---|
+| before | 10 | 0 |
+| after | 2 | 1 |
+
+and `single_agent_grounded` answers "What is the latest Linux version?" with
+`v7.1.0` instead of declining or naming an advisory.
+
+**This invalidates retrieval numbers collected before the fix** for any
+question whose product has an active CVE feed. Both arms were affected
+identically, so the *direction* of published comparisons is unlikely to move,
+but the absolute IR metrics will. Runs reported after this commit must be
+re-collected; runs reported before it should be cited with the commit that
+produced them. `tests/test_vendor_release_ranking.py` pins the ordering, and
+was confirmed to fail on the previous code.
+
 ## Why "make the tasks identical" has a limit
 
 The tasks are already identical: same questions, same corpus, same judge. What

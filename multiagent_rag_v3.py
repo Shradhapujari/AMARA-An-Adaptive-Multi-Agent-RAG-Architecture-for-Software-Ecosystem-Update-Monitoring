@@ -1055,7 +1055,14 @@ def fetch_vendor_releases(vendor: str, limit: int = 10, target_date: str = None)
                          or "torvalds" in str(v.get("versionProductBrand","")).lower()]
             releases = [v for _, v in dated[:limit]]
         else:
-            releases = releases[:limit]
+            # Deliberately NOT truncated here. The canonical_score sort below is
+            # what demotes CVE rows and promotes the canonical brand, and
+            # truncating first means it ranks a list the release track never
+            # reached. Measured against /api/c/name/linux on 2026-09-01: the
+            # CVE rows come back first (advisories are filed daily, kernels are
+            # not), so releases[:10] was ten advisories and the sort had nothing
+            # left to promote -- 0 shipped releases in 40 retrieved documents.
+            pass
 
         # ── Canonical brand prioritization ─────────────────────────────
         # Move entries where brand EXACTLY matches vendor to the front
@@ -1085,6 +1092,7 @@ def fetch_vendor_releases(vendor: str, limit: int = 10, target_date: str = None)
 
         if not target_date:
             releases.sort(key=canonical_score)
+            releases = releases[:limit]      # rank first, then cut
 
         results = []
         for v in releases:
