@@ -36,3 +36,9 @@ paper/*.xdv
 paper/*.pdf
 paper/*.blg
 paper/*.bbl.bak
+
+# local Claude Code session state (per-machine, not shared)
+.claude/
+
+# the ACM article template, downloaded from CTAN rather than vendored (16M)
+acmart-primary-3/
