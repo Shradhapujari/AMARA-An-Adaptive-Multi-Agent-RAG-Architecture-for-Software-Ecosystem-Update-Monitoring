@@ -5,10 +5,13 @@ Streamlit web app for software ecosystem monitoring.
 Uses 4 live releasetrain.io API endpoints.
 
 Agents:
-  1. Community Agent    → reddit/query/positive
+  0. Temporal Grounder   → rule-based, resolves "today"/"last week" to dates
+  1. Community Agent     → reddit/query/positive
   2. Release Notes Agent → /api/v/
-  3. CVE Agent          → reddit/query/cve
-  4. Query Rewriter     → Llama 3.1 via Ollama (local)
+  3. CVE Agent           → reddit/query/cve
+  4. Query Rewriter      → Llama 3.1 via Ollama (local)
+  5. Answer Presenter    → prose paragraph with bracketed evidence
+                           (eval_harness provider layer; rule-based offline)
 
 Run:
     pip install streamlit requests
@@ -23,6 +26,10 @@ import json
 import urllib.request
 import time
 from datetime import datetime
+
+from temporal import resolve_temporal, matches_window
+from fetch_union import union_fetch, product_terms
+from answer_agent import present_answer
 
 # ── PAGE CONFIG ──────────────────────────────────────────
 st.set_page_config(
@@ -78,6 +85,19 @@ RELEASES_API        = "https://releasetrain.io/api/v/"
 CVE_API             = "https://releasetrain.io/api/reddit/query/cve"
 OLLAMA_API          = "http://localhost:11434/api/generate"
 
+
+def presenter_spec() -> str:
+    """Which model the Answer Presenter uses, if any.
+
+    Read from Streamlit secrets first so a deployed host can supply one without
+    a code change; empty means the presenter runs its rule-based path, which is
+    what Community Cloud does today (no Ollama, no key).
+    """
+    try:
+        return str(st.secrets.get("PRESENTER_MODEL", "") or "")
+    except Exception:
+        return ""
+
 # ── AGENT 1: QUERY REWRITER ──────────────────────────────
 
 def rewrite_query(query: str) -> str:
@@ -103,7 +123,10 @@ Return ONLY the rewritten query in under 15 words, nothing else:"""
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=20) as r:
-            return json.loads(r.read()).get("response", "").strip()
+            out = json.loads(r.read()).get("response", "").strip()
+            # Llama wraps the rewrite in quotes often enough that the quotes
+            # end up in the `q` parameter; strip them rather than search for them.
+            return out.strip(" \"'").strip()
     except Exception:
         # Fallback rule-based rewriting
         expansions = {
@@ -225,11 +248,15 @@ def evaluate_results(community: list, releases: list, cve: list, query: str) -> 
 
 # ── MANAGER AGENT — ORCHESTRATOR ─────────────────────────
 
-def run_pipeline(query: str, show_steps: bool = True) -> dict:
+def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
     """Main orchestrator — runs all 4 agents and returns results."""
     results = {
         "original_query":  query,
+        "grounded_query":  query,
+        "temporal":        None,
         "rewritten_query": "",
+        "fetch_phrasings": [],
+        "release_phrasings": [],
         "community":       [],
         "releases":        [],
         "cve":             [],
@@ -237,39 +264,71 @@ def run_pipeline(query: str, show_steps: bool = True) -> dict:
         "timing":          {},
     }
 
+    # Step 0 — Temporal Grounder
+    # Runs before everything else: retrieval is similarity-based, and no
+    # document contains the word "today" -- it contains a date. Resolving the
+    # deictic term first means the rewriter, the fetch and the ranker all see
+    # the absolute date instead of a token that cannot match.
+    t0 = time.time()
+    temporal = resolve_temporal(query)
+    results["temporal"] = temporal
+    results["grounded_query"] = temporal.query
+    results["timing"]["temporal"] = round(time.time() - t0, 2)
+    grounded = temporal.query
+
     # Step 1 — Query Rewriter
     if show_steps:
         with st.spinner("🔄 Query Rewriter Agent — Llama 3.1 rewriting query..."):
             t0 = time.time()
-            rewritten = rewrite_query(query)
+            # The rewriter sees the *stripped* phrasing: its job is vocabulary
+            # expansion, and handing it the resolved date only gets the date
+            # copied into a query that then fetches nothing. The grounded
+            # phrasing is fetched alongside it, below.
+            rewritten = rewrite_query(temporal.stripped or query)
             results["rewritten_query"] = rewritten
             results["timing"]["rewriter"] = round(time.time()-t0, 1)
+
+    # Fetch phrasings: the expanded one first (recall), then the grounded one
+    # (date-aware), deduped so an unchanged query is not fetched twice.
+    phrasings = []
+    for p in [rewritten or temporal.stripped or query] + temporal.fetch_phrasings:
+        if p and p not in phrasings:
+            phrasings.append(p)
+    results["fetch_phrasings"] = phrasings
+
+    # The release endpoint matches product names, so a sentence retrieves
+    # nothing from it however well phrased. Fetch the product term too; the
+    # sentence phrasings still run, so nothing they would have found is lost.
+    release_phrasings = phrasings + [
+        t for t in product_terms(temporal.stripped or query) if t not in phrasings]
+    results["release_phrasings"] = release_phrasings
 
     # Step 2 — Community Agent
     if show_steps:
         with st.spinner("💬 Community Agent — fetching Reddit feedback..."):
             t0 = time.time()
-            results["community"] = fetch_community_feedback(rewritten or query)
+            results["community"] = union_fetch(fetch_community_feedback, phrasings, limit, temporal)
             results["timing"]["community"] = round(time.time()-t0, 1)
 
     # Step 3 — Release Notes Agent
     if show_steps:
         with st.spinner("📦 Release Notes Agent — fetching live releases..."):
             t0 = time.time()
-            results["releases"] = fetch_release_notes(rewritten or query)
+            results["releases"] = union_fetch(fetch_release_notes, release_phrasings,
+                                              limit, temporal)
             results["timing"]["releases"] = round(time.time()-t0, 1)
 
     # Step 4 — CVE Agent
     if show_steps:
         with st.spinner("🔐 CVE Agent — fetching security vulnerabilities..."):
             t0 = time.time()
-            results["cve"] = fetch_cve_data(query)
+            results["cve"] = union_fetch(fetch_cve_data, phrasings, limit, temporal)
             results["timing"]["cve"] = round(time.time()-t0, 1)
 
     # Step 5 — RLAIF Evaluator
     results["evaluation"] = evaluate_results(
         results["community"], results["releases"],
-        results["cve"], query
+        results["cve"], grounded
     )
 
     return results
@@ -287,11 +346,17 @@ with st.sidebar:
     st.markdown("""
     | Agent | Status |
     |-------|--------|
+    | 📅 Temporal Grounder | Rule-based |
     | 🔄 Query Rewriter | Llama 3.1 |
     | 💬 Community | Live API |
     | 📦 Release Notes | Live API |
     | 🔐 CVE Security | Live API |
+    | 🧾 Answer Presenter | LLM / rule-based |
     """)
+    spec = presenter_spec()
+    st.caption(f"Presenter model: `{spec}`" if spec
+               else "Presenter model: none configured — cited paragraph is "
+                    "composed rule-based.")
     st.divider()
 
     st.markdown("#### ⚙️ Settings")
@@ -303,6 +368,7 @@ with st.sidebar:
     st.markdown("#### 💡 Example queries")
     examples = [
         "Any critical Linux updates today?",
+        "Security patches released in the past 7 days",
         "Critical software updates published today",
         "What bugs were fixed in Chrome recently?",
         "Any security vulnerabilities in Python?",
@@ -349,7 +415,11 @@ if run_btn and query:
     if show_pipeline:
         st.markdown("---")
         st.markdown("### 🧠 Manager Agent — Think & Plan")
-        step_col1, step_col2, step_col3, step_col4 = st.columns(4)
+        step_col0, step_col1, step_col2, step_col3, step_col4 = st.columns(5)
+        with step_col0:
+            st.markdown("""<div class="agent-card">
+                <b>Step 0</b><br>📅 Temporal Grounder<br><small>rule-based, offline</small>
+            </div>""", unsafe_allow_html=True)
         with step_col1:
             st.markdown("""<div class="agent-card">
                 <b>Step 1</b><br>🔄 Query Rewriter<br><small>Llama 3.1 local</small>
@@ -369,15 +439,38 @@ if run_btn and query:
         st.markdown("---")
 
     # Run the pipeline
-    results = run_pipeline(query, show_steps=show_pipeline)
+    results = run_pipeline(query, show_steps=show_pipeline, limit=result_limit)
+
+    # ── TEMPORAL GROUNDING RESULT ─────────────────────────
+    tr = results["temporal"]
+    st.markdown("### 📅 Temporal Grounder Agent")
+    if tr is not None and tr.changed:
+        tg1, tg2 = st.columns(2)
+        with tg1:
+            st.info(f"**As asked:** {tr.original}")
+        with tg2:
+            st.success(f"**Grounded:** {tr.query}")
+        st.caption(f"Resolved {tr.describe()} — relative words are rewritten to "
+                   f"absolute dates before retrieval, because no document "
+                   f"contains the word “today”, only a date.")
+    else:
+        st.caption("No relative time expression in this query — nothing to ground. "
+                   "(Version words like “latest” are left alone on purpose: they "
+                   "are ordinal over releases, not a date.)")
 
     # ── QUERY REWRITING RESULT ────────────────────────────
     st.markdown("### 🔄 Query Rewriter Agent")
     rw_col1, rw_col2 = st.columns(2)
     with rw_col1:
-        st.info(f"**Original:** {results['original_query']}")
+        st.info(f"**Grounded input:** {results['grounded_query']}")
     with rw_col2:
         st.success(f"**Rewritten:** {results['rewritten_query'] or results['original_query']}")
+    fetched_on = results.get("release_phrasings") or results.get("fetch_phrasings", [])
+    if len(fetched_on) > 1:
+        st.caption("Fetched on every phrasing and unioned — " +
+                   " · ".join(f"“{p}”" for p in fetched_on) +
+                   ". The plain phrasing and the product term find the documents; "
+                   "the dated one lets the window rank them.")
 
     # ── RLAIF EVALUATION METRICS ──────────────────────────
     st.markdown("### 📊 RLAIF Evaluator")
@@ -390,7 +483,7 @@ if run_btn and query:
     m5.metric("CVE Results", ev["cve_count"])
 
     timing = results["timing"]
-    st.caption(f"⏱ Timing — Rewriter: {timing.get('rewriter',0)}s | Community: {timing.get('community',0)}s | Releases: {timing.get('releases',0)}s | CVE: {timing.get('cve',0)}s")
+    st.caption(f"⏱ Timing — Temporal: {timing.get('temporal',0)}s | Rewriter: {timing.get('rewriter',0)}s | Community: {timing.get('community',0)}s | Releases: {timing.get('releases',0)}s | CVE: {timing.get('cve',0)}s")
 
     st.markdown("---")
 
@@ -404,13 +497,25 @@ if run_btn and query:
     # Release Notes Tab
     with tab1:
         st.markdown("**Live software releases from releasetrain.io/api/v/**")
+        if tr is not None and tr.window and results["releases"]:
+            inside = sum(1 for r in results["releases"]
+                         if matches_window(r.get("date", ""), tr) is True)
+            st.caption(f"{inside} of {len(results['releases'])} shown releases fall "
+                       f"inside {tr.window[0]} … {tr.window[1]}. Out-of-window results "
+                       f"are kept and ranked last rather than dropped, so a quiet day "
+                       f"still returns something to read.")
         if results["releases"]:
             for r in results["releases"]:
                 is_security = "SECURITY" in r.get("security", [])
                 has_breaking = len(r.get("breaking", [])) > 0
                 badge = "🔴 SECURITY" if is_security else ("🟡 BREAKING" if has_breaking else "🟢 UPDATE")
+                # Whether this release actually falls in the asked-about window.
+                # None = no window asked for, or an unparseable date: shown as
+                # nothing rather than as a miss.
+                in_win = matches_window(r.get("date", ""), tr) if tr is not None else None
+                win_badge = "" if in_win is None else (" 📅 in window" if in_win else " ⏳ outside window")
 
-                with st.expander(f"{badge} {r['product']} v{r['version']} — {r['date']}"):
+                with st.expander(f"{badge} {r['product']} v{r['version']} — {r['date']}{win_badge}"):
                     col1, col2 = st.columns([3, 1])
                     with col1:
                         st.markdown(f"**Release Notes:** {r['notes'] or 'No notes available'}")
@@ -464,40 +569,54 @@ if run_btn and query:
     # Raw data
     if show_raw:
         with st.expander("🔍 Raw API response data"):
-            st.json(results)
+            # `temporal` holds a dataclass, which st.json cannot serialise;
+            # show its resolved fields instead of dropping the step from view.
+            raw = dict(results)
+            raw["temporal"] = {
+                "original": tr.original, "grounded": tr.query,
+                "resolved": [{"matched": a, "as": b} for a, b in tr.terms],
+                "window": [str(tr.start), str(tr.end)] if tr.window else None,
+            } if tr is not None else None
+            st.json(raw)
 
     # ── FINAL GROUNDED ANSWER ─────────────────────────────
+    # The Answer Presenter agent turns the retrieved documents into one
+    # readable paragraph and cites each claim in brackets. It reuses the
+    # eval harness's provider layer, so the presenting model is configurable
+    # (PRESENTER_MODEL in Streamlit secrets or the environment); with no model
+    # reachable it composes the same shape by rule and says so, rather than
+    # dressing rule-based text up as model output.
     st.markdown("---")
     st.markdown("### ✅ Final Answer")
 
-    answer_parts = []
+    window_note = ""
+    if tr is not None and tr.window:
+        a, b = tr.window
+        window_note = (a.strftime("%b %d, %Y") if a == b
+                       else f'{a.strftime("%b %d, %Y")} to {b.strftime("%b %d, %Y")}')
 
-    if results["releases"]:
-        security_releases = [r for r in results["releases"] if "SECURITY" in r.get("security",[])]
-        if security_releases:
-            answer_parts.append(f"🔐 **{len(security_releases)} security release(s) found:**")
-            for r in security_releases[:3]:
-                answer_parts.append(f"  • {r['product']} v{r['version']} ({r['date']}): {r['notes'][:100]}")
-        else:
-            answer_parts.append(f"📦 **{len(results['releases'])} release(s) found:**")
-            for r in results["releases"][:3]:
-                answer_parts.append(f"  • {r['product']} v{r['version']} ({r['date']})")
+    with st.spinner("🧾 Answer Presenter Agent — writing a cited paragraph..."):
+        t0 = time.time()
+        presented = present_answer(
+            results["original_query"], results,
+            model_spec=presenter_spec(), window_note=window_note,
+            per_kind=result_limit,
+        )
+        present_secs = round(time.time() - t0, 1)
 
-    if results["cve"]:
-        answer_parts.append(f"\n🔐 **{len(results['cve'])} CVE discussion(s) in community:**")
-        for c in results["cve"][:2]:
-            answer_parts.append(f"  • {c['title'][:80]}")
+    st.success(presented.text)
 
-    if results["community"]:
-        neg = [p for p in results["community"] if p["sentiment"]=="Negative"]
-        pos = [p for p in results["community"] if p["sentiment"]=="Positive"]
-        if neg: answer_parts.append(f"\n⚠️ **{len(neg)} negative community reaction(s) detected**")
-        if pos: answer_parts.append(f"\n✅ **{len(pos)} positive community post(s) found**")
+    src_label = (f"Presented by {presented.model}" if presented.mode == "llm"
+                 else f"Presented rule-based ({presented.note})")
+    st.caption(f"{src_label} · {len(presented.evidence)} evidence item(s) cited · {present_secs}s")
 
-    if not answer_parts:
-        answer_parts = ["No specific results found. Try a different query or check the individual tabs above."]
-
-    st.success("\n".join(answer_parts))
+    if presented.evidence:
+        with st.expander("🔗 Evidence behind the bracketed citations"):
+            for e in presented.evidence:
+                line = f"**[{e.label}]** — {e.title}"
+                if e.url:
+                    line += f" · [open source]({e.url})"
+                st.markdown(line)
 
 elif run_btn and not query:
     st.warning("Please enter a query first.")

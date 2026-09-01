@@ -283,13 +283,56 @@ ollama pull llama3.1:8b
 
 ### Run the Streamlit demo (recommended)
 
-The easiest way to try this system is the Streamlit interface — ask a question and watch the four agents coordinate live:
+The deployed demo is live at <https://software-update-questions.streamlit.app/> (the
+deploy target is `app_1.py`). To run it locally — ask a question and watch the agents
+coordinate live:
 
 ```bash
-streamlit run marag_app.py
+streamlit run app_1.py
 ```
 
-Then open the URL Streamlit prints (usually `http://localhost:8501`).
+Then open the URL Streamlit prints (usually `http://localhost:8501`). `marag_app.py` is
+the older, smaller demo of the same pipeline.
+
+**Answer Presenter model.** With no model configured the final answer is composed
+rule-based, which is what the deployed host does (Streamlit Community Cloud has no
+Ollama and holds no API key). To have a model write it instead, set a provider spec —
+in `.streamlit/secrets.toml` or the environment:
+
+```bash
+PRESENTER_MODEL=ollama:llama3.1 streamlit run app_1.py
+```
+
+Any spec `eval_harness/providers.py` understands works (`ollama:*`, `openai:*`,
+`anthropic:*`). The UI always states which path produced the paragraph.
+
+### Temporal grounding and cited answers
+
+Two agents were added to the demo pipeline after the evaluation reported below, so
+they are not part of any number in it:
+
+- **Temporal Grounder** (`temporal.py`) — retrieval is similarity-based and no document
+  contains the word *today*; it contains a date. So relative expressions are resolved to
+  absolute ones before retrieval: *"Any critical Linux updates today?"* becomes *"Any
+  critical Linux updates on Aug 31, 2026 (2026-08-31)?"*, in both the human and ISO
+  forms so lexical and embedding scorers each have something to match. Handles
+  today / yesterday / tomorrow, this-and-last week / month / year, "in the past N days",
+  and "recently". Version ordinals (*latest*, *newest*) are deliberately left alone —
+  they are ordinal over releases, not a date.
+
+  Grounding the date into the *fetch* is what a naive version gets wrong: the release
+  endpoint matches `q` against product names, so the dated phrasing returned 0 releases
+  where the plain one returned 5. `fetch_union.py` therefore fetches every phrasing —
+  plain, rewritten, dated, and the product term — unions the results, and uses the
+  resolved window to *rank* rather than to filter, so a quiet day still returns
+  something to read.
+
+- **Answer Presenter** (`answer_agent.py`) — turns the retrieved documents into one
+  readable paragraph with each claim cited in brackets, e.g. *"…resolves a kernel
+  vulnerability [Release Notes - Linux v6.18.21, 2026-08-28]"*, replacing the bullet
+  template the demo used to print. It reuses the harness's provider layer and its shared
+  grounding instruction; `build_synthesis_prompt` itself is untouched, because the
+  published answer-quality numbers were produced with that exact prompt.
 
 ### Run from the CLI
 
@@ -315,7 +358,11 @@ Key entry points:
 
 | File | What it is |
 |---|---|
-| `marag_app.py` | Streamlit demo — primary way to interact with the system |
+| `app_1.py` | Streamlit demo — the deployed app, primary way to interact with the system |
+| `temporal.py` | Temporal Grounder — resolves "today"/"last week" to absolute dates before retrieval |
+| `fetch_union.py` | Multi-phrasing union fetch with window-aware ranking |
+| `answer_agent.py` | Answer Presenter — prose answer with bracketed evidence |
+| `marag_app.py` | Earlier, smaller Streamlit demo of the same pipeline |
 | `multiagent_rag_v3.py` | Main four-agent system (pure Python implementation) |
 | `unified_agent_system.py` | Single-agent baseline used for comparison |
 | `rag_smolagents_v2.py` | Equivalent implementation using HuggingFace smolagents |
