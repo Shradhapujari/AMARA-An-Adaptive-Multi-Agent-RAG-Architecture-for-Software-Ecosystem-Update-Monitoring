@@ -42,3 +42,10 @@ paper/*.bbl.bak
 
 # the ACM article template, downloaded from CTAN rather than vendored (16M)
 acmart-primary-3/
+
+# the local store (store.py): a document cache and a run log, both rebuilt by
+# using the demo. Same reasoning as the corpus snapshots above -- fetched data,
+# not source. The -wal/-shm siblings are sqlite's WAL journal.
+data/*.db
+data/*.db-wal
+data/*.db-shm
