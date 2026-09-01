@@ -30,6 +30,7 @@ from datetime import datetime
 from temporal import resolve_temporal, matches_window
 from fetch_union import union_fetch, product_terms
 from answer_agent import present_answer
+from store import open_store, caching_fetch
 
 # ── PAGE CONFIG ──────────────────────────────────────────
 st.set_page_config(
@@ -141,6 +142,26 @@ Return ONLY the rewritten query in under 15 words, nothing else:"""
             if k in rewritten:
                 rewritten = rewritten.replace(k, v)
         return rewritten
+
+# ── STORE ────────────────────────────────────────────────
+# One SQLite file under data/, opened once per Streamlit process. Two jobs:
+# it caches every document the agents retrieve, so a host that cannot reach
+# releasetrain.io answers from what earlier runs fetched instead of from an
+# "API unavailable" placeholder; and it logs each answered question with the
+# documents behind it, so a run is inspectable after the tab is closed.
+#
+# `cache_resource` and not `cache_data`: the connection is a handle, not a
+# value, and re-opening it on every widget interaction would leave a file
+# handle per rerun. A store that fails to open is not a reason to refuse the
+# question -- the pipeline runs storeless, exactly as it did before.
+
+@st.cache_resource(show_spinner=False)
+def get_store():
+    try:
+        return open_store()
+    except Exception:
+        return None
+
 
 # ── AGENT 2: COMMUNITY AGENT ─────────────────────────────
 
@@ -303,18 +324,27 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
         t for t in product_terms(temporal.stripped or query) if t not in phrasings]
     results["release_phrasings"] = release_phrasings
 
+    # Each agent's fetch is wrapped so its results are written to the store and
+    # so an unreachable endpoint falls back to the documents earlier runs
+    # retrieved. The wrapper is transparent to `union_fetch`, which takes the
+    # fetch function as an argument precisely so it can be substituted.
+    db = get_store()
+    community_fetch = caching_fetch(db, "community", fetch_community_feedback)
+    release_fetch   = caching_fetch(db, "release",   fetch_release_notes)
+    cve_fetch       = caching_fetch(db, "cve",       fetch_cve_data)
+
     # Step 2 — Community Agent
     if show_steps:
         with st.spinner("💬 Community Agent — fetching Reddit feedback..."):
             t0 = time.time()
-            results["community"] = union_fetch(fetch_community_feedback, phrasings, limit, temporal)
+            results["community"] = union_fetch(community_fetch, phrasings, limit, temporal)
             results["timing"]["community"] = round(time.time()-t0, 1)
 
     # Step 3 — Release Notes Agent
     if show_steps:
         with st.spinner("📦 Release Notes Agent — fetching live releases..."):
             t0 = time.time()
-            results["releases"] = union_fetch(fetch_release_notes, release_phrasings,
+            results["releases"] = union_fetch(release_fetch, release_phrasings,
                                               limit, temporal)
             results["timing"]["releases"] = round(time.time()-t0, 1)
 
@@ -322,7 +352,7 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
     if show_steps:
         with st.spinner("🔐 CVE Agent — fetching security vulnerabilities..."):
             t0 = time.time()
-            results["cve"] = union_fetch(fetch_cve_data, phrasings, limit, temporal)
+            results["cve"] = union_fetch(cve_fetch, phrasings, limit, temporal)
             results["timing"]["cve"] = round(time.time()-t0, 1)
 
     # Step 5 — RLAIF Evaluator
@@ -378,6 +408,37 @@ with st.sidebar:
     for ex in examples:
         if st.button(ex, use_container_width=True):
             st.session_state["query_input"] = ex
+
+    st.divider()
+    st.markdown("#### 🗄️ Store")
+    _db = get_store()
+    if _db is None:
+        st.caption("Unavailable — the pipeline runs without it, fetching live "
+                   "every time and keeping no history.")
+    else:
+        _stats = _db.stats()
+        sc1, sc2 = st.columns(2)
+        sc1.metric("Documents", _stats["documents_total"])
+        sc2.metric("Runs", _stats["runs"])
+        by_pool = _stats["documents"]
+        if by_pool:
+            st.caption(" · ".join(f"{k} {v}" for k, v in sorted(by_pool.items())) +
+                       (f" · since {(_stats['since'] or '')[:10]}" if _stats["since"] else ""))
+        else:
+            st.caption("Empty — it fills as questions are asked. Cached documents "
+                       "are what answers a question when the API cannot be reached.")
+
+        _recent = _db.recent_runs(limit=8)
+        if _recent:
+            with st.expander(f"🕘 Last {len(_recent)} question(s)"):
+                for r in _recent:
+                    flag = " · offline" if r.offline else ""
+                    st.markdown(f"**{r.query}**")
+                    st.caption(f"{r.ts[:16].replace('T', ' ')} · "
+                               f"{r.n_documents} document(s){flag}")
+                    if st.button("Ask again", key=f"again_{r.run_id}",
+                                 use_container_width=True):
+                        st.session_state["query_input"] = r.query
 
 # ── MAIN UI ───────────────────────────────────────────────
 
@@ -617,6 +678,33 @@ if run_btn and query:
                 if e.url:
                     line += f" · [open source]({e.url})"
                 st.markdown(line)
+
+    # ── LOG THE RUN ───────────────────────────────────────
+    # Written after the answer exists, so the stored row is the whole run --
+    # question, phrasings, retrieved documents in rank order, and which of them
+    # the answer actually cited. `record_run` swallows its own failures and
+    # returns None; a store that cannot write must not cost the user an answer
+    # already on screen.
+    #
+    # A run is marked offline when any shown document came from the store
+    # rather than the endpoint. Cache-served rows carry `_last_seen`, which a
+    # freshly fetched row does not, so the flag is read off the documents
+    # instead of guessed from an exception that never reached this scope.
+    _db_run = get_store()
+    if _db_run is not None:
+        _served = (results["releases"] + results["community"] + results["cve"])
+        _offline = any("_last_seen" in d for d in _served if isinstance(d, dict))
+        _run_id = _db_run.record_run(
+            dict(results,
+                 cited_keys=[e.url for e in presented.evidence if e.url]),
+            answer=presented.text, offline=_offline)
+        if _offline:
+            st.warning("Some sources were unreachable — the documents above "
+                       "were served from the local store, retrieved during an "
+                       "earlier run. Dates on them are release dates, not "
+                       "retrieval dates.")
+        if _run_id is not None:
+            st.caption(f"Logged as run #{_run_id} in the local store.")
 
 elif run_btn and not query:
     st.warning("Please enter a query first.")
