@@ -8,8 +8,8 @@ a retrieval-level feedback loop and a persistent term-weight memory.
 **Live demo:** <https://software-update-questions.streamlit.app/> â€” public, no
 API key required.
 
-This wiki is the working documentation. The [README][readme] is the front door;
-`eval_harness/FINDINGS.md` in the repository is the evidence chain.
+These pages are the working documentation. The [README][readme] is the front
+door; `eval_harness/FINDINGS.md` is the evidence chain behind every number.
 
 ---
 
@@ -27,7 +27,7 @@ phrasings and unioning the pools raises nDCG@3 from 0.188 to 0.765 in one step â
 and brings the system to **parity** with the baseline, not superiority, at
 roughly twice the latency.
 
-[Evaluation and Findings](Evaluation-and-Findings) has the full chain, including
+[Evaluation and Findings](Evaluation-and-Findings.md) has the full chain, including
 the readings that were superseded along the way and two numbers that should not
 be reintroduced.
 
@@ -37,12 +37,12 @@ be reintroduced.
 
 | Page | What it covers |
 |---|---|
-| [Architecture](Architecture) | The agents, the pipeline, the feedback loop, and the two agents added after the evaluation |
-| [Evaluation and Findings](Evaluation-and-Findings) | How the negative result was found, localized and repaired; every number and its provenance |
-| [Running the System](Running-the-System) | Setup, the demo, the CLI, and every environment variable that changes behaviour |
-| [Benchmarks and Data](Benchmarks-and-Data) | The question sets, the live sources, and how to rebuild or freeze them |
-| [Deployment](Deployment) | The Streamlit deployment, what degrades without a model, and how to configure one |
-| [Roadmap and Open Questions](Roadmap-and-Open-Questions) | What is unfinished, what is unproven, and what would settle it |
+| [Architecture](Architecture.md) | The agents, the pipeline, the feedback loop, and the two agents added after the evaluation |
+| [Evaluation and Findings](Evaluation-and-Findings.md) | How the negative result was found, localized and repaired; every number and its provenance |
+| [Running the System](Running-the-System.md) | Setup, the demo, the CLI, and every environment variable that changes behaviour |
+| [Benchmarks and Data](Benchmarks-and-Data.md) | The question sets, the live sources, and how to rebuild or freeze them |
+| [Deployment](Deployment.md) | The Streamlit deployment, what degrades without a model, and how to configure one |
+| [Roadmap and Open Questions](Roadmap-and-Open-Questions.md) | What is unfinished, what is unproven, and what would settle it |
 
 ---
 

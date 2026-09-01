@@ -72,7 +72,7 @@ the live endpoint on 2026-08-31:
 Any sentence-shaped phrasing — the user's, the rewriter's, or a date-grounded
 one — retrieves nothing from it. This is why the demo also fetches an extracted
 product term and unions the results, and why a date narrows results only *after*
-the fetch. See [Architecture](Architecture).
+the fetch. See [Architecture](Architecture.md).
 
 ## Freezing the corpus
 

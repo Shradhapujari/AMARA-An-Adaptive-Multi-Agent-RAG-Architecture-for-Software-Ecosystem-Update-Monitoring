@@ -45,7 +45,7 @@ terms that have led to successful retrievals.
 
 **The defect that made this project a negative result lived here** — not in the
 rewriting itself, but in how its output was used. See
-[Evaluation and Findings](Evaluation-and-Findings).
+[Evaluation and Findings](Evaluation-and-Findings.md).
 
 ### Retriever
 Vendor-aware search across a registry of 14,223 vendors and 628

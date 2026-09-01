@@ -27,7 +27,7 @@ streamlit run app_1.py
 ```
 
 `app_1.py` is the deploy target; `marag_app.py` is an earlier, smaller demo of
-the same pipeline. See [Deployment](Deployment) for the hosted version and for
+the same pipeline. See [Deployment](Deployment.md) for the hosted version and for
 what changes when no model is reachable.
 
 ## The CLI

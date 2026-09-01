@@ -70,19 +70,23 @@
 
 ## Documentation
 
-The [**wiki**](https://github.com/Shradhapujari/Adaptive-Multi-Agent-RAG-Architecture-for-Software-Ecosystem-Update-Monitoring/wiki)
-carries the working documentation — its source is in [`wiki/`](wiki/), so a
-documentation change is reviewable in a pull request next to the code it
-describes.
+Working documentation lives in [`docs/`](docs/) and renders on GitHub in place —
+kept in the repository rather than in a wiki so a documentation change is
+reviewable in a pull request next to the code it describes.
 
 | Page | What it covers |
 |---|---|
-| [Architecture](wiki/Architecture.md) | The agents, the pipeline, the feedback loop, and the two agents added after the evaluation |
-| [Evaluation and Findings](wiki/Evaluation-and-Findings.md) | How the negative result was found, localized and repaired; every number and its provenance |
-| [Running the System](wiki/Running-the-System.md) | Setup, the demo, the CLI, and every environment variable that changes behaviour |
-| [Benchmarks and Data](wiki/Benchmarks-and-Data.md) | Question sets, live sources, rebuilding, and freezing the corpus |
-| [Deployment](wiki/Deployment.md) | The Streamlit deployment and what degrades without a model |
-| [Roadmap and Open Questions](wiki/Roadmap-and-Open-Questions.md) | What is unfinished, what is unproven, and what would settle it |
+| [Overview](docs/Overview.md) | What the system is, and the negative result to read first |
+| [Architecture](docs/Architecture.md) | The agents, the pipeline, the feedback loop, and the two agents added after the evaluation |
+| [Evaluation and Findings](docs/Evaluation-and-Findings.md) | How the negative result was found, localized and repaired; every number and its provenance |
+| [Running the System](docs/Running-the-System.md) | Setup, the demo, the CLI, and every environment variable that changes behaviour |
+| [Benchmarks and Data](docs/Benchmarks-and-Data.md) | Question sets, live sources, rebuilding, and freezing the corpus |
+| [Deployment](docs/Deployment.md) | The Streamlit deployment and what degrades without a model |
+| [Roadmap and Open Questions](docs/Roadmap-and-Open-Questions.md) | What is unfinished, what is unproven, and what would settle it |
+
+Deeper than these: [`eval_harness/FINDINGS.md`](eval_harness/FINDINGS.md) for the
+evidence chain, [`results/PROVENANCE.md`](results/PROVENANCE.md) for the run id
+behind every reported number.
 
 ---
 
@@ -493,7 +497,7 @@ Key entry points:
 | `run_all.sh` | Shell script to run the full evaluation pipeline |
 | `eval_harness/` | IR + judge evaluation harness — generators, metrics, benchmarks, providers, findings |
 | `paper/` | TOSEM manuscript source (`tosem_amara.tex`) and its figures |
-| `wiki/` | Source of the GitHub wiki pages (see below) |
+| `docs/` | Working documentation — architecture, findings, running, benchmarks, deployment, roadmap |
 
 Data and results:
 
