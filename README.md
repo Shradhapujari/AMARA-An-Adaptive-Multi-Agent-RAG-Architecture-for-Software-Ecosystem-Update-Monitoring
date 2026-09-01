@@ -506,7 +506,6 @@ Data and results:
 | `eval_50_results_v2.json` | Per-question scores for the 50-question evaluation |
 | `ablation_results.json` | Ablation study results (per-component contribution) |
 | `accuracy_test_results.json`, `accuracy_postfix_results.json` | Answer-accuracy evaluations |
-| `MultiAgent_Presentation_20thMarch.pptx` | Earlier presentation slides |
 | `results/PROVENANCE.md` | Run id behind every number reported in the paper |
 
 Older / archived versions of the main scripts (`multiagent_rag.py`, `multiagent_rag_v2.py`, `evaluate.py`, `evaluate_v2.py`, `app.py`, etc.) are kept in the repo root for reference and reproducibility.
