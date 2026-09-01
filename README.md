@@ -64,7 +64,6 @@
 | **Paper** | Retargeted from the AgenticSE '26 workshop version and submitted to **TOSEM**, special section on Human–AI Collaboration in Software Engineering (1 September 2026). Source: `paper/tosem_amara.tex` |
 | **Framing** | A negative result plus its remedy, not an improvement claim |
 | **Tests** | 477 offline tests, no network required |
-| **Slides** | [`MultiAgentRAG_Framework_Sep2026.pptx`](MultiAgentRAG_Framework_Sep2026.pptx) — architecture, the negative result, the repair, the deployed app |
 
 ---
 
@@ -507,7 +506,6 @@ Data and results:
 | `eval_50_results_v2.json` | Per-question scores for the 50-question evaluation |
 | `ablation_results.json` | Ablation study results (per-component contribution) |
 | `accuracy_test_results.json`, `accuracy_postfix_results.json` | Answer-accuracy evaluations |
-| `MultiAgentRAG_Framework_Sep2026.pptx` | Current slide deck — architecture, negative result, repair, deployed app |
 | `MultiAgent_Presentation_20thMarch.pptx` | Earlier presentation slides |
 | `results/PROVENANCE.md` | Run id behind every number reported in the paper |
 
