@@ -75,6 +75,10 @@ _CUES: Dict[str, List[Tuple[str, int]]] = {
         (r"\bwhen (?:will|is|does|was)\b", 1), (r"\bstable\b", 1),
         (r"\bLTS\b", 2), (r"\brc\d*\b", 1), (r"\bbeta\b", 1),
         (r"\bwhat changed\b", 3), (r"\brelease channel\b", 3),
+        # "What bugs were fixed in Chrome recently?" is a changelog question:
+        # it asks what a release contained, not whether anything is exploitable.
+        (r"\bwhat bugs\b", 2), (r"\bbugs? (?:were |was |got )?fixed\b", 2),
+        (r"\bfixed in\b", 2), (r"\bbug ?fix(?:es|ed)?\b", 2),
         # Naming a concrete version is itself the strongest release cue in the
         # benchmark: 41 of the 100 questions do it, and a question that quotes
         # a version number is asking about that version, not about opinion.

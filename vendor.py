@@ -52,6 +52,8 @@ __all__ = [
     "disambiguate",
     "classify_record",
     "is_release_record",
+    "advisory_id",
+    "describe_record",
     "filter_by_vendor",
     "filter_community",
     "subreddit_vendor",
@@ -317,6 +319,40 @@ def classify_record(row: Dict) -> str:
 def is_release_record(row: Dict) -> bool:
     """True when the row describes a version that actually shipped."""
     return classify_record(row) == "release"
+
+
+_CVE_RE = re.compile(r"CVE-\d{4}-\d{4,}", re.I)
+
+
+def advisory_id(row: Dict) -> str:
+    """The CVE identifier a row is about, or `""`.
+
+    Read from the URL, which is where it actually is -- an advisory row's
+    `versionNumber` holds an affected-version string, and its notes hold the
+    kernel's own description of the flaw.
+    """
+    haystack = " ".join(str(row.get(k) or "") for k in
+                        ("url", "versionUrl", "title", "notes", "versionReleaseNotes"))
+    m = _CVE_RE.search(haystack)
+    return m.group(0).upper() if m else ""
+
+
+def describe_record(row: Dict) -> str:
+    """How a row should be named when it is cited.
+
+    An advisory is named by its CVE id, never by its `versionNumber`: printing
+    "Linux v25.642087.0" invites the reader to believe a version by that name
+    shipped, which is the misreading this whole module exists to prevent. The
+    affected-version string is still reported, but as what it is.
+    """
+    product = str(row.get("product") or row.get("versionProductName") or "").strip()
+    version = str(row.get("version") or row.get("versionNumber") or "").strip()
+    if classify_record(row) == "release":
+        return f"{product} v{version}".strip() if version else product
+
+    cve = advisory_id(row)
+    head = cve or f"{product} advisory"
+    return f"{head} (affects {product} {version})" if version else head
 
 
 # Subreddit -> catalog product. The community feed carries no product field at

@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vendor import (  # noqa: E402
     VendorMatch,
+    advisory_id,
+    describe_record,
     classify_record,
     detect_vendors,
     disambiguate,
@@ -190,3 +192,28 @@ def test_product_named_in_a_title_counts_even_off_topic_subreddit():
 def test_community_falls_back_rather_than_returning_nothing():
     # No vendor, and no content term matches: a loose pool beats an empty one.
     assert filter_community(COMMUNITY, [], terms=["kubernetes"]) == COMMUNITY
+
+
+# ── How a row is named when cited ────────────────────────────────────────
+
+def test_advisory_is_named_by_its_cve_not_its_version_string():
+    # "Linux v25.642087.0" invites the reader to believe a version by that
+    # name shipped. It did not; that is an NVD affected-version field.
+    assert describe_record(ADVISORY) == "CVE-2026-80688 (affects Linux 25.642087.0)"
+
+
+def test_release_is_named_by_its_version():
+    assert describe_record(RELEASE) == "linux v7.1.0"
+
+
+def test_advisory_id_read_from_the_url():
+    assert advisory_id(ADVISORY) == "CVE-2026-80688"
+
+
+def test_release_has_no_advisory_id():
+    assert advisory_id(RELEASE) == ""
+
+
+def test_advisory_without_a_cve_id_still_names_itself_honestly():
+    row = {"product": "Linux", "version": "1.2.3", "isCve": True}
+    assert describe_record(row) == "Linux advisory (affects Linux 1.2.3)"
