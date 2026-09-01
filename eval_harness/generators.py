@@ -418,6 +418,90 @@ class SelfReflectiveGenerator(Generator):
         }
 
 
+class GroundedSingleAgentGenerator(SingleAgentGenerator):
+    """Baseline retrieval, but over a *grounded* question.
+
+    The rung the capability table asks for. Query understanding -- resolving
+    "today" to a date, recognising "Linux" as a catalog product, deciding
+    whether the question is about security or about a release -- is not
+    coordination, so a single-agent arm can have all of it without becoming
+    multi-agent. Giving it only to the multi-agent pipeline would make every
+    measured gap the sum of "coordination helps" and "understanding the
+    question helps", and the paper claims only the first.
+
+    Retrieval is `RetrieverAgent` exactly as `single_agent` uses it, on the
+    same `top_k`, with the same synthesis prompt and model. The single
+    difference is that the question handed to it has been through
+    `grounding.ground`, and that documents the question's intent forbids are
+    dropped -- for a "latest version" question a CVE row is not weak evidence,
+    it is wrong evidence.
+
+    Deliberately paired with `single_agent`, not with `marag`: A1 -> A1g
+    measures grounding with no coordination present at all.
+    """
+
+    name = "single_agent_grounded"
+
+    def __init__(self, client: Optional[LLMClient] = None, top_k: int = 4,
+                 now=None):
+        super().__init__(client=client, top_k=top_k, render="prose")
+        self.name = "single_agent_grounded"
+        # Injected for the same reason `temporal` injects it: a run replayed
+        # next month must ground its questions the way the original run did.
+        self._now = now
+        import grounding as _grounding
+        import vendor as _vendor
+        self._ground = _grounding.ground
+        self._vendor = _vendor
+        self._catalog = _vendor.load_catalog()
+
+    # How many candidates to ask for before the record-type filter cuts to
+    # top_k. Filtering the top 4 is useless when all 4 are advisories, which is
+    # the normal case for a product with an active CVE feed: /api/v/?q=linux
+    # returns 449 advisory rows to 157 release rows, and the advisories are
+    # newer because they are filed daily and kernels are not released daily.
+    # Over-fetching is what gives the filter something to keep.
+    POOL_FACTOR = 6
+
+    def generate(self, query: str) -> Dict:
+        g = self._ground(query, now=self._now, catalog=self._catalog)
+        # The retriever is given the grounded phrasing; `original_query` stays
+        # the user's wording, which is what the reranker scores against.
+        retrieval_query = g.retrieval_phrasings[0] if g.retrieval_phrasings else query
+        pool_k = max(self.top_k * self.POOL_FACTOR, 24)
+        with _silenced(self.marag):
+            pool = self.retriever.run(retrieval_query, top_k=pool_k,
+                                      original_query=query)
+
+        docs = list(pool)
+        if "cve" not in g.citable_kinds:
+            kept = [d for d in pool
+                    if self._vendor.doc_kind(d) in g.citable_kinds]
+            # Never empty the pool on a filter: an answer with no documents is
+            # worse than an answer over imperfect ones, and the ladder needs
+            # this rung to differ from A1 by grounding, not by starvation. When
+            # the filter does empty it, that is itself the finding -- the pool
+            # genuinely held no shipped release -- and the synthesis prompt
+            # will say so rather than name an advisory as a version.
+            docs = kept or pool
+        docs = docs[:self.top_k]
+
+        prompt = build_synthesis_prompt(query, docs, self.top_k)
+        try:
+            answer = self.client.generate(prompt, temperature=0.0, max_tokens=400)
+        except LLMError as e:
+            answer = f"[generation error: {e}]"
+        return {
+            "answer": answer,
+            "docs": [normalize_doc(d) for d in docs],
+            "pool": [normalize_doc(d) for d in pool],
+            "self_quality": None,
+            "rewritten_query": g.rewritten,
+            "intent": g.intent.label if g.intent else "",
+            "vendors": g.vendor_names,
+        }
+
+
 def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:
     """
     Build generators from short specs:
@@ -464,6 +548,11 @@ def build_generators(specs: List[str], top_k: int = 4) -> List[Generator]:
         elif spec.startswith("marag_retry:"):
             gens.append(MultiAgentRAGGenerator(
                 top_k=top_k, synth=make_client(spec.split(":", 1)[1]), retry=True))
+        elif spec == "single_agent_grounded":
+            gens.append(GroundedSingleAgentGenerator(top_k=top_k))
+        elif spec.startswith("single_agent_grounded:"):
+            gens.append(GroundedSingleAgentGenerator(
+                make_client(spec.split(":", 1)[1]), top_k))
         elif spec == "single_agent_template":
             gens.append(SingleAgentGenerator(top_k=top_k, render="template"))
         elif spec == "single_agent":
