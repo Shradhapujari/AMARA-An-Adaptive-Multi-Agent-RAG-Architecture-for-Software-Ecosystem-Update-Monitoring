@@ -550,6 +550,87 @@ def _n_shipped(rows) -> int:
     return sum(1 for r in (rows or []) if vendor.is_release_record(r))
 
 
+def _agent_table(results=None, presented=None) -> str:
+    """The sidebar's agent roster, reporting what each agent actually did.
+
+    It used to be a static table: "Query Rewriter | Llama 3.1" whether or not
+    a model was reachable, "CVE Security | Live API" whether or not the feed
+    answered. On Streamlit Community Cloud no Ollama is reachable, so the
+    rewriter row was wrong on every run there, and a timed-out feed still
+    advertised itself as live.
+
+    The sidebar renders before the pipeline does, so this is written into a
+    placeholder twice: an idle roster first, then the real one once the run
+    has finished and every status is known.
+    """
+    def row(icon, name, status):
+        return f"| {icon} {name} | {status} |"
+
+    head = ["| Agent | Status |", "|-------|--------|"]
+    if results is None:
+        return "\n".join(head + [
+            row("📅", "Temporal Grounder", "Rule-based"),
+            row("🏷", "Vendor & Intent", "Catalog + cues"),
+            row("🔄", "Query Rewriter", "Llama 3.1 / rule"),
+            row("💬", "Community", "Live API"),
+            row("📦", "Release Notes", "Live API"),
+            row("🔐", "Security", "Live API"),
+            row("🧾", "Answer Presenter", "LLM / rule-based"),
+            "", "*Idle — statuses fill in after a run.*"])
+
+    down = {e["agent"] for e in (results.get("errors") or [])}
+
+    tr = results.get("temporal")
+    temporal_status = "Grounded" if (tr is not None and tr.changed) else "Nothing to ground"
+
+    gq = results.get("grounding")
+    if gq is None:
+        vendor_status = "—"
+    elif gq.vendors:
+        intent = gq.intent.label if (gq.intent and gq.intent.confident) else "no intent"
+        vendor_status = f"{', '.join(gq.vendor_names)} · {intent}"
+    else:
+        vendor_status = "no product matched"
+
+    rw = results.get("rewrite")
+    if rw is None:
+        rewriter_status = "Not run"
+    elif rw.mode == "llm":
+        rewriter_status = rw.model
+    else:
+        rewriter_status = "Rule-based (fallback)"
+
+    def feed(agent, rows, extra=""):
+        if agent in down:
+            return "⚠️ Unreachable"
+        return f"{len(rows)} doc(s){extra}"
+
+    rel = results.get("releases") or []
+    shipped = _n_shipped(rel)
+    rel_extra = f" · {len(rel) - shipped} advisory" if len(rel) > shipped else ""
+    dropped = results.get("cve_dropped") or 0
+
+    if presented is None:
+        presenter_status = "Not run"
+    elif presented.mode == "llm":
+        presenter_status = presented.model
+    else:
+        presenter_status = "Rule-based"
+
+    return "\n".join(head + [
+        row("📅", "Temporal Grounder", temporal_status),
+        row("🏷", "Vendor & Intent", vendor_status),
+        row("🔄", "Query Rewriter", rewriter_status),
+        row("💬", "Community", feed("Community", results.get("community") or [])),
+        row("📦", "Release Notes",
+            feed("Release Notes", [r for r in rel if vendor.is_release_record(r)], rel_extra)),
+        row("🔐", "Security",
+            feed("CVE", results.get("cve") or [],
+                 f" · {dropped} off-topic dropped" if dropped else "")),
+        row("🧾", "Answer Presenter", presenter_status),
+    ])
+
+
 # ── SIDEBAR ───────────────────────────────────────────────
 
 with st.sidebar:
@@ -560,16 +641,10 @@ with st.sidebar:
     st.divider()
 
     st.markdown("#### 🤖 Active Agents")
-    st.markdown("""
-    | Agent | Status |
-    |-------|--------|
-    | 📅 Temporal Grounder | Rule-based |
-    | 🔄 Query Rewriter | Llama 3.1 |
-    | 💬 Community | Live API |
-    | 📦 Release Notes | Live API |
-    | 🔐 CVE Security | Live API |
-    | 🧾 Answer Presenter | LLM / rule-based |
-    """)
+    # Filled in again at the end of the run, once every status is a fact
+    # rather than an advertisement.
+    agent_status_slot = st.empty()
+    agent_status_slot.markdown(_agent_table())
     spec = presenter_spec()
     st.caption(f"Presenter model: `{spec}`" if spec
                else "Presenter model: none configured — cited paragraph is "
@@ -938,6 +1013,10 @@ if run_btn and query:
         present_secs = round(time.time() - t0, 1)
 
     st.success(presented.text)
+
+    # The roster now describes this run: which feeds answered, whether the
+    # rewrite came from a model, how many advisories were separated out.
+    agent_status_slot.markdown(_agent_table(results, presented))
 
     src_label = (f"Presented by {presented.model}" if presented.mode == "llm"
                  else f"Presented rule-based ({presented.note})")
