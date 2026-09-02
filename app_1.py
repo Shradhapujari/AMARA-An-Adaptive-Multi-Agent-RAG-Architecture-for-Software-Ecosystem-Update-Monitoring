@@ -27,6 +27,7 @@ import urllib.request
 import re
 import time
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -106,8 +107,42 @@ def presenter_spec() -> str:
 
 # ── AGENT 1: QUERY REWRITER ──────────────────────────────
 
-def rewrite_query(query: str) -> str:
-    """Calls Llama 3.1 locally to rewrite the query for better retrieval."""
+@dataclass
+class Rewrite:
+    """A rewritten query and which path produced it.
+
+    Same shape and vocabulary as `answer_agent.PresentedAnswer`, and for the
+    same reason: the demo must never show rule-based output while implying a
+    model produced it. The presenter already said which path it took; the
+    rewriter returned a bare string, so a rule-based expansion appeared under
+    the heading "Query Rewriter Agent — Llama 3.1" with nothing to distinguish
+    it. On Streamlit Community Cloud, where no Ollama is reachable, that is
+    every run.
+    """
+    query: str
+    mode: str                  # "llm" or "rule-based"
+    model: str = ""
+    note: str = ""
+
+
+def _rule_based_rewrite(query: str) -> str:
+    """Keyword expansion used when no model is reachable."""
+    expansions = {
+        "bugs": "bug fixes resolved defects",
+        "latest": "latest version release notes",
+        "critical": "critical security vulnerability patch",
+        "update": "software update release changelog",
+        "today": f"released {datetime.now().strftime('%Y-%m-%d')}",
+    }
+    rewritten = query.lower()
+    for k, v in expansions.items():
+        if k in rewritten:
+            rewritten = rewritten.replace(k, v)
+    return rewritten
+
+
+def rewrite_query(query: str) -> Rewrite:
+    """Rewrite for retrieval with Llama 3.1, or by rule, saying which."""
     prompt = f"""You are a software update search expert.
 Rewrite this query to better match software update documents and Reddit posts.
 Focus on: bug fixes, security patches, release notes, CVE vulnerabilities, version updates.
@@ -132,21 +167,14 @@ Return ONLY the rewritten query in under 15 words, nothing else:"""
             out = json.loads(r.read()).get("response", "").strip()
             # Llama wraps the rewrite in quotes often enough that the quotes
             # end up in the `q` parameter; strip them rather than search for them.
-            return out.strip(" \"'").strip()
-    except Exception:
-        # Fallback rule-based rewriting
-        expansions = {
-            "bugs": "bug fixes resolved defects",
-            "latest": "latest version release notes",
-            "critical": "critical security vulnerability patch",
-            "update": "software update release changelog",
-            "today": f"released {datetime.now().strftime('%Y-%m-%d')}",
-        }
-        rewritten = query.lower()
-        for k, v in expansions.items():
-            if k in rewritten:
-                rewritten = rewritten.replace(k, v)
-        return rewritten
+            out = out.strip(" \"'").strip()
+        if out:
+            return Rewrite(out, mode="llm", model="llama3.1")
+        return Rewrite(_rule_based_rewrite(query), mode="rule-based",
+                       note="llama3.1 returned an empty rewrite")
+    except Exception as exc:                    # noqa: BLE001 - reported, not hidden
+        return Rewrite(_rule_based_rewrite(query), mode="rule-based",
+                       note=f"llama3.1 not reachable ({type(exc).__name__})")
 
 # ── STORE ────────────────────────────────────────────────
 # One SQLite file under data/, opened once per Streamlit process. Two jobs:
@@ -357,6 +385,7 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
         "grounded_query":  query,
         "temporal":        None,
         "rewritten_query": "",
+        "rewrite":         None,
         "fetch_phrasings": [],
         "release_phrasings": [],
         "community":       [],
@@ -397,7 +426,9 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
             # expansion, and handing it the resolved date only gets the date
             # copied into a query that then fetches nothing. The grounded
             # phrasing is fetched alongside it, below.
-            rewritten = rewrite_query(temporal.stripped or query)
+            rw = rewrite_query(temporal.stripped or query)
+            rewritten = rw.query
+            results["rewrite"] = rw
             results["rewritten_query"] = rewritten
             results["timing"]["rewriter"] = round(time.time()-t0, 1)
 
@@ -732,7 +763,20 @@ if run_btn and query:
     with rw_col1:
         st.info(f"**Grounded input:** {results['grounded_query']}")
     with rw_col2:
-        st.success(f"**Rewritten:** {results['rewritten_query'] or results['original_query']}")
+        rw = results.get("rewrite")
+        text = results['rewritten_query'] or results['original_query']
+        if rw is not None and rw.mode == "llm":
+            st.success(f"**Rewritten** by {rw.model}: {text}")
+        elif rw is not None:
+            # Never shown as model output. On a host with no reachable Ollama
+            # -- Streamlit Community Cloud, for one -- this is every run, and
+            # the heading above still reads "Llama 3.1 local".
+            st.warning(f"**Rewritten** by rule: {text}")
+            st.caption(f"Rule-based keyword expansion — {rw.note}. "
+                       "The rewrite is blunter than a model's; retrieval still "
+                       "runs on the grounded product term alongside it.")
+        else:
+            st.success(f"**Rewritten:** {text}")
     fetched_on = results.get("release_phrasings") or results.get("fetch_phrasings", [])
     if len(fetched_on) > 1:
         st.caption("Fetched on every phrasing and unioned — " +
@@ -862,6 +906,10 @@ if run_btn and query:
                 "retrieval_phrasings": gq.retrieval_phrasings,
                 "needs_clarification": gq.needs_clarification,
             } if gq is not None else None
+            _rw = results.get("rewrite")
+            raw["rewrite"] = {"query": _rw.query, "mode": _rw.mode,
+                              "model": _rw.model, "note": _rw.note} \
+                if _rw is not None else None
             st.json(raw)
 
     # ── FINAL GROUNDED ANSWER ─────────────────────────────
