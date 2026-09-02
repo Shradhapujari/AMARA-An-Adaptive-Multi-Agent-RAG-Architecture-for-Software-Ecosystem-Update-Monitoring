@@ -413,8 +413,9 @@ coordinate live:
 streamlit run app_1.py
 ```
 
-Then open the URL Streamlit prints (usually `http://localhost:8501`). `marag_app.py` is
-the older, smaller demo of the same pipeline.
+Then open the URL Streamlit prints (usually `http://localhost:8501`).
+`marag_app.py` is a one-line shim that imports `app_1.py`, kept because the
+Streamlit Cloud app is configured to serve that filename.
 
 **Answer Presenter model.** With no model configured the final answer is composed
 rule-based, which is what the deployed host does (Streamlit Community Cloud has no
@@ -484,7 +485,7 @@ Key entry points:
 | `temporal.py` | Temporal Grounder — resolves "today"/"last week" to absolute dates before retrieval |
 | `fetch_union.py` | Multi-phrasing union fetch with window-aware ranking |
 | `answer_agent.py` | Answer Presenter — prose answer with bracketed evidence |
-| `marag_app.py` | Earlier, smaller Streamlit demo of the same pipeline |
+| `marag_app.py` | Shim importing `app_1.py`, kept because the Cloud app is configured to serve this filename |
 | `multiagent_rag_v3.py` | Main four-agent system (pure Python implementation) |
 | `unified_agent_system.py` | Single-agent baseline used for comparison |
 | `rag_smolagents_v2.py` | Equivalent implementation using HuggingFace smolagents |

@@ -3,8 +3,18 @@
 **Live:** <https://software-update-questions.streamlit.app/> — public, live APIs,
 no API key required.
 
-Deploy target: `app_1.py` (Streamlit Community Cloud). `marag_app.py` is an
-earlier, smaller demo of the same pipeline.
+Deploy target: `app_1.py` (Streamlit Community Cloud).
+
+`marag_app.py` is now a one-line shim that imports `app_1`, so both entrypoints
+render the same app. It used to be a second full copy of the pipeline, and
+because the Cloud app is configured to serve *that* file, the public URL showed
+the older copy: it answered "Any critical Linux updates today?" with a release
+whose name was an `HTTPSConnectionPool ... Read timed out` exception, months
+after `app_1.py` had been fixed. Two pipelines meant the deployed one was the
+one nobody was editing.
+
+If the Streamlit Cloud app setting is repointed to `app_1.py` directly, the
+shim can go.
 
 ## What the deployed app shows
 

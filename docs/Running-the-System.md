@@ -26,9 +26,10 @@ ollama pull nomic-embed-text
 streamlit run app_1.py
 ```
 
-`app_1.py` is the deploy target; `marag_app.py` is an earlier, smaller demo of
-the same pipeline. See [Deployment](Deployment.md) for the hosted version and for
-what changes when no model is reachable.
+`app_1.py` is the deploy target. `marag_app.py` is a one-line shim that imports
+it, kept because the Streamlit Cloud app is configured to serve that filename.
+See [Deployment](Deployment.md) for the hosted version and for what changes when
+no model is reachable.
 
 ## The CLI
 
