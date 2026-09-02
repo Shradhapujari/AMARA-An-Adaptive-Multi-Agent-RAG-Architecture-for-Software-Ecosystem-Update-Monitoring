@@ -1,28 +1,35 @@
 """
-Deployment entrypoint — renders the maintained demo in `app_1.py`.
+Deployment entrypoint — runs the maintained demo in `app_1.py`.
 
-This file used to be a second, older copy of the whole pipeline: its own
-fetchers, its own evaluator, its own answer rendering. It had drifted badly
-from `app_1.py`, and because Streamlit Community Cloud serves *this* file, the
-drift was what the public URL showed. The reviewed demo answered
+This file used to be a second, older copy of the whole pipeline; that is
+recorded in git history and in the commit that replaced it. This note is
+about a second bug the replacement introduced.
 
-    Any critical Linux updates today?
-    -> 1 release(s) found:
-       • Error: HTTPSConnectionPool(host='releasetrain.io', port=443):
-         Read timed out. (read timeout=10) v ()
+Streamlit reruns the entrypoint *script* on every page load and every widget
+interaction -- rebuilding the page from scratch is the framework's whole
+model, so nothing persists between runs except what an app explicitly caches.
+A plain `import app_1` looks like it does that, but only its first execution
+does real work: Python imports the module once and caches it in
+`sys.modules`, so every rerun after the first finds `app_1` already imported
+and does nothing -- none of its `st.*` calls fire again. Streamlit still
+reports the run as CONNECTED / notRunning, because nothing raised; the page
+is simply never rebuilt. Confirmed by reloading a running local instance:
+first load -- layout "wide", 8 elements, 482 characters of text; reload of
+the same process -- layout "narrow" (app_1's set_page_config never re-ran),
+zero elements, still CONNECTED. That is the same state the deployed URL was
+in, and it explains why a brand-new process always looked fine to every local
+test and probe run here -- each one only ever observed a first run.
 
-from this file's copy of the fetchers, which returned a row whose product name
-was the exception text -- while `app_1.py` had already been fixed to ground the
-question, exclude advisories from release answers, and present a cited
-paragraph. Nobody was going to keep two pipelines honest, and the one on the
-public URL was the one nobody was editing.
-
-So there is now one pipeline. Importing `app_1` runs it: a Streamlit script
-*is* its module body, so the import renders the page.
-
-The previous contents are in git (`git log --follow marag_app.py`) if the
-smaller demo is ever wanted back -- but it should be restored as a thin view
-over `app_1`'s functions, not as a second implementation of them.
+`runpy.run_path` re-executes the target file as `__main__` on every call, so
+every rerun does real work again, the same as if `app_1.py` were the
+configured entrypoint directly. This file exists at all only because
+Streamlit Cloud is configured to serve this filename; if that setting is ever
+repointed to `app_1.py`, this file can go.
 """
 
-import app_1  # noqa: F401  -- the import is the render
+import runpy
+from pathlib import Path
+
+# Resolved against this file rather than the working directory, so the
+# entrypoint does not depend on where the server was started from.
+runpy.run_path(str(Path(__file__).with_name("app_1.py")), run_name="__main__")
