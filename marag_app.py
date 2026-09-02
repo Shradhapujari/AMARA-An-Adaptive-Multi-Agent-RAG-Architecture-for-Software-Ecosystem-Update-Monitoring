@@ -4,57 +4,25 @@ Deployment entrypoint — renders the maintained demo in `app_1.py`.
 This file used to be a second, older copy of the whole pipeline: its own
 fetchers, its own evaluator, its own answer rendering. It had drifted badly
 from `app_1.py`, and because Streamlit Community Cloud serves *this* file, the
-drift was what the public URL showed -- a release whose name was an
-`HTTPSConnectionPool ... Read timed out` exception, months after `app_1.py`
-had been fixed. There is now one pipeline; importing `app_1` runs it, because
-a Streamlit script *is* its module body.
+drift was what the public URL showed. The reviewed demo answered
 
-The wrapper around that import is a deploy probe, and it is here because the
-deployed app went blank while every environment it could be reproduced in ran
-it fine: a clean venv on the pinned requirements with Streamlit 1.63.0 renders
-this file correctly, and so does the developer's own machine. A blank page
-means nothing reached the browser, so nothing said why. The probe makes the
-deployment state its own failure:
+    Any critical Linux updates today?
+    -> 1 release(s) found:
+       • Error: HTTPSConnectionPool(host='releasetrain.io', port=443):
+         Read timed out. (read timeout=10) v ()
 
-  * the "Starting" marker paints before the import, so a page frozen on it
-    means the import hung rather than raised -- a distinction the blank page
-    destroys;
-  * an exception is rendered into the page instead of only into logs that
-    need a dashboard login to read.
+from this file's copy of the fetchers, which returned a row whose product name
+was the exception text -- while `app_1.py` had already been fixed to ground the
+question, exclude advisories from release answers, and present a cited
+paragraph. Nobody was going to keep two pipelines honest, and the one on the
+public URL was the one nobody was editing.
 
-`set_page_config` has to be the first Streamlit call, so it is made here and
-neutralised for the duration of the import -- calling it twice is an error,
-and `app_1` rightly calls it itself. The arguments are copied from `app_1`, so
-the page is identical to the one it configures.
+So there is now one pipeline. Importing `app_1` runs it: a Streamlit script
+*is* its module body, so the import renders the page.
 
-Remove the probe once the deployment is healthy: the import alone is the
-supported behaviour, and `git log` holds this note if it is ever needed again.
+The previous contents are in git (`git log --follow marag_app.py`) if the
+smaller demo is ever wanted back -- but it should be restored as a thin view
+over `app_1`'s functions, not as a second implementation of them.
 """
 
-import traceback
-
-import streamlit as st
-
-st.set_page_config(
-    page_title="Multi-Agent RAG System — Software Ecosystem Monitor",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-_boot = st.empty()
-_boot.info("Starting — importing the pipeline…")
-
-_set_page_config = st.set_page_config
-st.set_page_config = lambda *a, **k: None      # app_1 calls it again; already done
-
-try:
-    import app_1  # noqa: F401  -- the import is the render
-    _boot.empty()
-except BaseException:                           # noqa: BLE001 - shown, not swallowed
-    _boot.empty()
-    st.error("The app failed to start. Traceback below.")
-    st.code(traceback.format_exc(), language="text")
-    raise
-finally:
-    st.set_page_config = _set_page_config
+import app_1  # noqa: F401  -- the import is the render
