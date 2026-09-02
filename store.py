@@ -41,9 +41,11 @@ caller asking the store a question wants the answer or the error.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
@@ -223,15 +225,41 @@ class RunSummary:
     offline: bool
 
 
+def _synchronized(method):
+    """Serialise one Store method against the others on the same connection.
+
+    `check_same_thread=False` only silences sqlite's thread check; it does not
+    make a connection safe to use from two threads at once. Streamlit runs each
+    script execution on its own thread and `st.cache_resource` hands every
+    session the *same* Store, so two overlapping reruns share one connection.
+    Without this, concurrent work on it raises -- "cannot start a transaction
+    within a transaction" from interleaved `with self.conn:` blocks, or
+    "Recursive use of cursors not allowed" -- and the demo renders an empty
+    page, because the exception escapes before anything is drawn.
+
+    WAL lets separate *connections* overlap; this is the other half, for the
+    one connection shared between threads.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class Store:
-    """The SQLite store. One instance per process; sqlite handles the rest."""
+    """The SQLite store. One instance per process, shared across threads."""
 
     def __init__(self, conn: sqlite3.Connection, fts: bool):
         self.conn = conn
         self.fts = fts
+        # Reentrant: record_run calls record_documents, and a plain Lock would
+        # deadlock on the nested call.
+        self._lock = threading.RLock()
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
+    @_synchronized
     def close(self) -> None:
         self.conn.close()
 
@@ -243,6 +271,7 @@ class Store:
 
     # ── writes ───────────────────────────────────────────────────────────
 
+    @_synchronized
     def record_documents(self, pool: str, rows: Iterable[Dict]) -> int:
         """Upsert fetched rows; returns how many were storable.
 
@@ -279,6 +308,7 @@ class Store:
             )
         return len(prepared)
 
+    @_synchronized
     def record_run(self, results: Dict, answer: str = "",
                    offline: bool = False) -> Optional[int]:
         """Log one `run_pipeline` result and the documents it retrieved.
@@ -347,6 +377,7 @@ class Store:
 
     # ── reads ────────────────────────────────────────────────────────────
 
+    @_synchronized
     def search(self, query: str, pool: Optional[str] = None,
                limit: int = 5) -> List[Dict]:
         """Stored documents matching `query`, best first.
@@ -394,6 +425,7 @@ class Store:
             return []
         return [_payload(r) for r in rows]
 
+    @_synchronized
     def recent_runs(self, limit: int = 20) -> List[RunSummary]:
         """The history pane's rows, newest first."""
         rows = self.conn.execute(
@@ -413,6 +445,7 @@ class Store:
                            n_documents=r["n"], offline=bool(r["offline"]))
                 for r in rows]
 
+    @_synchronized
     def run_documents(self, run_id: int) -> List[Dict]:
         """What one run retrieved, in the order it retrieved it."""
         rows = self.conn.execute(
@@ -432,6 +465,7 @@ class Store:
             out.append(doc)
         return out
 
+    @_synchronized
     def stats(self) -> Dict[str, Any]:
         """Counts for the sidebar and for `scripts/` to assert against."""
         docs = self.conn.execute(
@@ -490,6 +524,8 @@ def open_store(path: Optional[str] = None) -> Store:
     conn = sqlite3.connect(target, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Wait for a writer instead of raising "database is locked" immediately.
+    conn.execute("PRAGMA busy_timeout = 5000")
     if target != ":memory:":
         conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(_SCHEMA)
