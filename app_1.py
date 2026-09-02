@@ -24,6 +24,7 @@ import streamlit as st
 import requests
 import json
 import urllib.request
+import re
 import time
 from contextvars import ContextVar
 from datetime import datetime
@@ -221,6 +222,33 @@ def _get_json(url: str, params: dict, agent: str, attempts: int = 2,
             time.sleep(1.0)
     _record_fetch_error(agent, last or RuntimeError("unknown failure"))
     return None
+
+
+
+_CVE_ID = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.I)
+_SECURITY_WORDS = re.compile(
+    r"\b(vulnerab\w*|exploit\w*|security|patch\w*|advisor\w*|malware|"
+    r"ransomware|breach\w*|zero.?day|rce|privilege escalation|backdoor)\b", re.I)
+
+
+def is_security_post(row: dict) -> bool:
+    """Whether a Reddit row from the CVE feed is actually about security.
+
+    /api/reddit/query/cve does not filter by security any more than it filters
+    by `q`. Measured 2026-09-01, `q=linux&limit=5` returned "North Pi case with
+    custom side panel", "Air Force Sys Admin" and "Coding as a hobby?" -- no CVE
+    id in any title, `isAboutCve` unset on every row, and nothing about Linux.
+    Rendering those under a padlock as security findings, and counting them
+    beside real NVD advisories, states something false about them.
+
+    So the feed's own claim is not taken on faith: a row has to carry a CVE id,
+    the upstream flag, or a security word of its own.
+    """
+    text = " ".join(str(row.get(f) or "") for f in ("title", "notes"))
+    tags = " ".join(str(t) for t in (row.get("tags") or []))
+    return bool(row.get("is_cve")
+                or _CVE_ID.search(text) or _CVE_ID.search(tags)
+                or _SECURITY_WORDS.search(text))
 
 
 # ── AGENT 2: COMMUNITY AGENT ─────────────────────────────
@@ -453,6 +481,17 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
                                              terms=g.terms)
         results["community"] = scoped_com or results["community"]
 
+    # The CVE feed is Reddit, not an advisory feed, so it gets the same vendor
+    # scoping as the community pool and then has to prove it is about security
+    # at all. Filters never empty a pool; a thin pool beats a false one.
+    if g.vendors:
+        scoped_cve = vendor.filter_community(results["cve"], g.vendors,
+                                             terms=g.terms)
+        results["cve"] = scoped_cve or results["cve"]
+    on_topic = [r for r in results["cve"] if is_security_post(r)]
+    results["cve_dropped"] = len(results["cve"]) - len(on_topic)
+    results["cve"] = on_topic
+
     if "cve" not in g.citable_kinds:
         shipped = [r for r in results["releases"] if vendor.is_release_record(r)]
         results["advisories_excluded"] = len(results["releases"]) - len(shipped)
@@ -474,6 +513,11 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
     )
 
     return results
+
+def _n_shipped(rows) -> int:
+    """How many of the release-feed rows are versions that actually shipped."""
+    return sum(1 for r in (rows or []) if vendor.is_release_record(r))
+
 
 # ── SIDEBAR ───────────────────────────────────────────────
 
@@ -666,10 +710,17 @@ if run_btn and query:
                 "A CVE record's version field is the *affected* version, not a "
                 "version that shipped — citing one as a release is what produced "
                 "answers like “Linux v25.642087.0”.")
-        elif "cve" in gq.citable_kinds:
+        elif gq.intent and gq.intent.label == "security":
             st.caption("Security question — advisories are kept and cited as "
                        "advisories, named by their CVE id rather than by the "
                        "affected-version string.")
+        else:
+            # Reached when no intent was confident enough to route on. Saying
+            # "security question" here contradicted the line directly above it,
+            # which had just reported no clear intent.
+            st.caption("No intent was confident enough to narrow the search, so "
+                       "every source is searched and advisories are cited as "
+                       "advisories rather than as releases.")
         if gq.needs_clarification:
             st.error("No product and no clear intent were found in this "
                      "question. The answer below is drawn from an unscoped "
@@ -706,9 +757,15 @@ if run_btn and query:
 
     # ── RESULTS TABS ──────────────────────────────────────
     tab1, tab2, tab3 = st.tabs([
-        f"📦 Release Notes ({len(results['releases'])})",
+        # The release tab counted advisories as releases, so a pool of four NVD
+        # records and one kernel read as "Release Notes (5)" while the answer
+        # below it said one release. Both numbers were right about different
+        # things; only the label was wrong.
+        f"📦 Releases ({_n_shipped(results['releases'])})"
+        + (f" + {len(results['releases']) - _n_shipped(results['releases'])} advisory"
+           if len(results['releases']) > _n_shipped(results['releases']) else ""),
         f"💬 Community Feedback ({len(results['community'])})",
-        f"🔐 CVE Security ({len(results['cve'])})",
+        f"🔐 Security Discussion ({len(results['cve'])})",
     ])
 
     # Release Notes Tab

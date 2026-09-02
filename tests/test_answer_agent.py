@@ -56,7 +56,10 @@ def test_evidence_labels_carry_source_name_and_date():
     # deliberately with vendor.classify_record.
     assert "Security Advisory - Linux advisory (affects Linux 6.18.21), 2026-08-28" in labels
     assert "Release Notes - Django v5.2.1, 2026-08-20" in labels
-    assert "CVE Feed - r/netsec, 2026-08-30" in labels
+    # Rows from /api/reddit/query/cve are Reddit posts, not advisory records.
+    # "CVE Feed" claimed a security feed had reported them; the endpoint
+    # returns unfiltered community posts, so it is cited as a discussion.
+    assert "Security Discussion - r/netsec, 2026-08-30" in labels
     assert "Community - r/linux, 2026-08-31" in labels
 
 
@@ -72,13 +75,16 @@ def test_deterministic_paragraph_cites_every_kind():
     ev = collect_evidence(RESULTS)
     text = deterministic_paragraph("Any critical Linux updates today?", ev,
                                    window_note="Aug 31, 2026")
-    # The Linux row is advisory-shaped, so it joins the advisory group rather
-    # than the release group: "every kind" is now release, advisory, community.
-    # The paragraph names the lead advisory and counts the rest, so the netsec
-    # item is counted ("2 CVE discussion(s)") rather than cited by name.
+    # Four kinds now, each counted on its own: a shipped release, an advisory
+    # record, a Reddit security thread, and a community post. One count
+    # covering the advisory and the thread overstated how much security
+    # reporting existed -- an NVD record and an r/netsec post are not the same
+    # kind of evidence.
     assert "[Release Notes - Django v5.2.1, 2026-08-20]" in text
+    assert "1 advisory record(s) apply" in text
     assert "[Security Advisory - Linux advisory (affects Linux 6.18.21), 2026-08-28]" in text
-    assert "2 CVE discussion(s)" in text
+    assert "Community security discussion adds 1 post(s)" in text
+    assert "[Security Discussion - r/netsec, 2026-08-30]" in text
     assert "[Community - r/linux, 2026-08-31]" in text
     assert "Aug 31, 2026" in text
     # One paragraph, not a bullet template.
@@ -232,3 +238,23 @@ def test_model_preamble_and_wrapping_quotes_are_stripped(monkeypatch, raw, expec
     assert out.mode == "llm"
     assert out.text.startswith(expected_start)
     assert not out.text.startswith('"')
+
+
+def test_advisories_and_reddit_threads_are_counted_separately():
+    # The demo reported "9 CVE discussion(s)" for a pool of 4 NVD advisories
+    # and 5 unrelated Reddit posts. One number over both kinds is a claim
+    # neither set supports.
+    ev = collect_evidence(RESULTS)
+    kinds = {e.kind for e in ev}
+    assert "advisory" in kinds and "cve" in kinds
+    text = deterministic_paragraph("q", ev)
+    assert "1 advisory record(s)" in text
+    assert "1 post(s)" in text
+
+
+def test_a_reddit_row_is_never_labelled_as_an_advisory_feed():
+    ev = collect_evidence({"cve": [{"title": "Password managers",
+                                    "subreddit": "linuxquestions",
+                                    "date": "2026-08-25", "url": ""}]})
+    assert ev[0].label.startswith("Security Discussion")
+    assert "CVE Feed" not in ev[0].label

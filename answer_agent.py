@@ -136,15 +136,20 @@ def collect_evidence(results: Dict, per_kind: int = 4) -> List[Evidence]:
         prefix = "Security Advisory" if advisory else "Release Notes"
         label = f"{prefix} - {name}" + (f", {date}" if date else "")
         ev.append(Evidence(
-            label=label, kind="cve" if advisory else "release", title=name,
+            label=label, kind="advisory" if advisory else "release", title=name,
             detail=_clean(r.get("notes", "")), url=r.get("url", ""), date=date,
             security=advisory or "SECURITY" in (r.get("security") or []),
         ))
 
     for c in (results.get("cve") or [])[:per_kind]:
+        # These come from /api/reddit/query/cve -- Reddit posts, not advisory
+        # records. Labelling them "CVE Feed" told the reader a security feed
+        # had reported them, which is a claim the row cannot support: the
+        # endpoint returns unfiltered community posts. They are cited as what
+        # they are, and counted apart from real advisories.
         date = _iso(c.get("date"))
         sub = c.get("subreddit", "")
-        label = "CVE Feed" + (f" - r/{sub}" if sub else "") + (f", {date}" if date else "")
+        label = "Security Discussion" + (f" - r/{sub}" if sub else "") + (f", {date}" if date else "")
         ev.append(Evidence(
             label=label, kind="cve", title=_clean(c.get("title", ""), 160),
             url=c.get("url", ""), date=date, security=True,
@@ -215,6 +220,7 @@ def deterministic_paragraph(query: str, evidence: List[Evidence],
 
     rel = [e for e in evidence if e.kind == "release"]
     sec = [e for e in rel if e.security]
+    adv = [e for e in evidence if e.kind == "advisory"]
     cve = [e for e in evidence if e.kind == "cve"]
     com = [e for e in evidence if e.kind == "community"]
 
@@ -240,9 +246,16 @@ def deterministic_paragraph(query: str, evidence: List[Evidence],
     else:
         parts.append(f"No release notes matched this question{scope}.")
 
+    if adv:
+        parts.append(f"On the security side, {len(adv)} advisory record(s) "
+                     f"apply, led by “{adv[0].title}” [{adv[0].label}].")
+
     if cve:
-        parts.append(f"On the security side, {len(cve)} CVE discussion(s) came "
-                     f"back, led by “{cve[0].title}” [{cve[0].label}].")
+        # Deliberately a separate sentence and a separate count: a Reddit
+        # thread and an NVD record are not the same kind of evidence, and one
+        # number covering both overstates how much security reporting there is.
+        parts.append(f"Community security discussion adds {len(cve)} post(s), "
+                     f"including “{cve[0].title}” [{cve[0].label}].")
 
     if com:
         neg = [e for e in com if e.sentiment == "Negative"]
