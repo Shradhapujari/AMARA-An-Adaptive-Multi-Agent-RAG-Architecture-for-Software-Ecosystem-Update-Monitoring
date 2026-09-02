@@ -25,7 +25,9 @@ import requests
 import json
 import urllib.request
 import time
+from contextvars import ContextVar
 from datetime import datetime
+from typing import Dict, List, Optional
 
 from temporal import resolve_temporal, matches_window
 from fetch_union import union_fetch, product_terms
@@ -165,99 +167,133 @@ def get_store():
         return None
 
 
+
+# ── FETCH OUTAGES ────────────────────────────────────────
+# A failed fetch used to return one row whose title was the exception text:
+#
+#   [{"product": "API unavailable: HTTPSConnectionPool(... Read timed out)"}]
+#
+# That row is indistinguishable from a document once it leaves the fetcher. It
+# was counted ("Releases 1"), rendered as a release, and cited as a source, so
+# a network timeout reached the reader as a retrieved fact. A system that says
+# "1 release found" and names a stack trace has not degraded gracefully, it has
+# fabricated a citation.
+#
+# Fetchers now return no documents and record the outage here instead. The
+# pipeline reports the feed as unreachable, which is true and is checkable.
+_FETCH_ERRORS: ContextVar[Optional[List[Dict[str, str]]]] = ContextVar(
+    "marag_fetch_errors", default=None)
+
+
+def _reset_fetch_errors() -> List[Dict[str, str]]:
+    """Start a fresh outage log for one pipeline run, and return it."""
+    log: List[Dict[str, str]] = []
+    _FETCH_ERRORS.set(log)
+    return log
+
+
+def _record_fetch_error(agent: str, exc: Exception) -> list:
+    """Log an outage and return the empty result the caller should propagate."""
+    log = _FETCH_ERRORS.get()
+    if log is not None:
+        log.append({"agent": agent, "error": f"{type(exc).__name__}: {exc}"})
+    return []
+
+
+def _get_json(url: str, params: dict, agent: str, attempts: int = 2,
+              timeout: int = 20) -> Optional[dict]:
+    """GET with one retry, or None with the outage recorded.
+
+    The screenshot that prompted this read `Read timed out. (read timeout=10)`
+    against releasetrain.io, so the timeout is longer and a single transient
+    failure no longer costs the whole pool.
+    """
+    last: Optional[Exception] = None
+    for attempt in range(attempts):
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            if resp.status_code == 200:
+                return resp.json()
+            last = RuntimeError(f"HTTP {resp.status_code}")
+        except Exception as exc:          # noqa: BLE001 - reported, not swallowed
+            last = exc
+        if attempt + 1 < attempts:
+            time.sleep(1.0)
+    _record_fetch_error(agent, last or RuntimeError("unknown failure"))
+    return None
+
+
 # ── AGENT 2: COMMUNITY AGENT ─────────────────────────────
 
 def fetch_community_feedback(query: str, limit: int = 5) -> list:
     """Fetches community Reddit feedback from releasetrain.io."""
-    try:
-        resp = requests.get(
-            REDDIT_POSITIVE_API,
-            params={"q": query, "limit": limit},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            posts = data.get("data", [])
-            return [{
-                "title":      p.get("title", ""),
-                "subreddit":  p.get("subreddit", ""),
-                "url":        p.get("url", ""),
-                "score":      p.get("score", 0),
-                "sentiment":  "Positive" if p.get("metadata", {}).get("predicted", {}).get("positiveScore", 0) > 0.5 else "Neutral",
-                "date":       p.get("created_utc", "")[:10],
-                "is_cve":     p.get("isAboutCve", False),
-                "is_update":  p.get("isAboutLatestUpdate", False),
-            } for p in posts[:limit]]
-    except Exception as e:
-        return [{"title": f"API unavailable: {e}", "subreddit": "", "url": "", "score": 0, "sentiment": "Neutral", "date": "", "is_cve": False, "is_update": False}]
+    data = _get_json(REDDIT_POSITIVE_API, {"q": query, "limit": limit},
+                     agent="Community")
+    if data is not None:
+        posts = data.get("data", [])
+        return [{
+            "title":      p.get("title", ""),
+            "subreddit":  p.get("subreddit", ""),
+            "url":        p.get("url", ""),
+            "score":      p.get("score", 0),
+            "sentiment":  "Positive" if p.get("metadata", {}).get("predicted", {}).get("positiveScore", 0) > 0.5 else "Neutral",
+            "date":       p.get("created_utc", "")[:10],
+            "is_cve":     p.get("isAboutCve", False),
+            "is_update":  p.get("isAboutLatestUpdate", False),
+        } for p in posts[:limit]]
     return []
 
 # ── AGENT 3: RELEASE NOTES AGENT ─────────────────────────
 
 def fetch_release_notes(query: str, limit: int = 5) -> list:
     """Fetches live software release notes from releasetrain.io."""
-    try:
-        resp = requests.get(
-            RELEASES_API,
-            params={"q": query, "limit": limit},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            versions = data.get("versions", [])
-            # The endpoint ignores `limit` and returns the whole product's
-            # history newest-first, so the slice below is ours. Taking the
-            # first `limit` rows takes only advisories: measured 2026-09-01,
-            # q=Linux returns 606 rows of which 449 are CVE records dated
-            # 2026-08-28, while the newest shipped kernel is dated 2026-07-19.
-            # Every release is therefore behind every advisory, and any slice
-            # short of ~450 rows contains no release at all.
-            #
-            # So take `limit` of each kind rather than `limit` of the whole.
-            # The pool then carries both, and the intent filter downstream
-            # decides which may be cited -- a decision that needs both kinds
-            # present to be a decision.
-            advisories = [v for v in versions if v.get("isCve")]
-            releases = [v for v in versions if not v.get("isCve")]
-            versions = releases[:limit] + advisories[:limit]
-            return [{
-                "product":   v.get("versionProductName", ""),
-                "version":   v.get("versionNumber", ""),
-                "date":      v.get("versionReleaseDate", ""),
-                "notes":     v.get("versionReleaseNotes", "")[:200],
-                "channel":   v.get("versionReleaseChannel", ""),
-                "url":       v.get("versionUrl", ""),
-                "security":  v.get("classification", {}).get("securityType", []),
-                "breaking":  v.get("classification", {}).get("breakingType", []),
-                "is_cve":    v.get("isCve", False),
-            } for v in versions]
-    except Exception as e:
-        return [{"product": f"API unavailable: {e}", "version": "", "date": "", "notes": "", "channel": "", "url": "", "security": [], "breaking": [], "is_cve": False}]
+    data = _get_json(RELEASES_API, {"q": query, "limit": limit},
+                     agent="Release Notes")
+    if data is not None:
+        versions = data.get("versions", [])
+        # The endpoint ignores `limit` and returns the whole product's
+        # history newest-first, so the slice below is ours. Taking the
+        # first `limit` rows takes only advisories: measured 2026-09-01,
+        # q=Linux returns 606 rows of which 449 are CVE records dated
+        # 2026-08-28, while the newest shipped kernel is dated 2026-07-19.
+        # Every release is therefore behind every advisory, and any slice
+        # short of ~450 rows contains no release at all.
+        #
+        # So take `limit` of each kind rather than `limit` of the whole.
+        # The pool then carries both, and the intent filter downstream
+        # decides which may be cited -- a decision that needs both kinds
+        # present to be a decision.
+        advisories = [v for v in versions if v.get("isCve")]
+        releases = [v for v in versions if not v.get("isCve")]
+        versions = releases[:limit] + advisories[:limit]
+        return [{
+            "product":   v.get("versionProductName", ""),
+            "version":   v.get("versionNumber", ""),
+            "date":      v.get("versionReleaseDate", ""),
+            "notes":     v.get("versionReleaseNotes", "")[:200],
+            "channel":   v.get("versionReleaseChannel", ""),
+            "url":       v.get("versionUrl", ""),
+            "security":  v.get("classification", {}).get("securityType", []),
+            "breaking":  v.get("classification", {}).get("breakingType", []),
+            "is_cve":    v.get("isCve", False),
+        } for v in versions]
     return []
 
 # ── AGENT 4: CVE AGENT ───────────────────────────────────
 
 def fetch_cve_data(query: str, limit: int = 5) -> list:
     """Fetches CVE security vulnerability data from releasetrain.io."""
-    try:
-        resp = requests.get(
-            CVE_API,
-            params={"q": query, "limit": limit},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            posts = data.get("data", [])
-            return [{
-                "title":     p.get("title", ""),
-                "subreddit": p.get("subreddit", ""),
-                "url":       p.get("url", ""),
-                "date":      p.get("created_utc", "")[:10],
-                "score":     p.get("score", 0),
-                "tags":      p.get("tags", []),
-            } for p in posts[:limit]]
-    except Exception as e:
-        return [{"title": f"CVE API unavailable: {e}", "subreddit": "", "url": "", "date": "", "score": 0, "tags": []}]
+    data = _get_json(CVE_API, {"q": query, "limit": limit}, agent="CVE")
+    if data is not None:
+        posts = data.get("data", [])
+        return [{
+            "title":     p.get("title", ""),
+            "subreddit": p.get("subreddit", ""),
+            "url":       p.get("url", ""),
+            "date":      p.get("created_utc", "")[:10],
+            "score":     p.get("score", 0),
+            "tags":      p.get("tags", []),
+        } for p in posts[:limit]]
     return []
 
 # ── RLAIF EVALUATOR ──────────────────────────────────────
@@ -300,6 +336,7 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
         "cve":             [],
         "evaluation":      {},
         "timing":          {},
+        "errors":          [],
     }
 
     # Step 0 — Temporal Grounder
@@ -307,6 +344,9 @@ def run_pipeline(query: str, show_steps: bool = True, limit: int = 5) -> dict:
     # document contains the word "today" -- it contains a date. Resolving the
     # deictic term first means the rewriter, the fetch and the ranker all see
     # the absolute date instead of a token that cannot match.
+    errors = _reset_fetch_errors()
+    results["errors"] = errors
+
     t0 = time.time()
     # One call, and it is the same call the evaluation's `single_agent_grounded`
     # arm makes: temporal grounding, vendor detection from the /api/c/names
@@ -590,6 +630,15 @@ if run_btn and query:
         st.caption("No relative time expression in this query — nothing to ground. "
                    "(Version words like “latest” are left alone on purpose: they "
                    "are ordinal over releases, not a date.)")
+
+    # ── FEED OUTAGES ──────────────────────────────────────
+    # Named explicitly. The alternative this replaced was a document whose
+    # title was the exception text, which the answer then cited as a source.
+    if results.get("errors"):
+        for e in results["errors"]:
+            st.error(f"**{e['agent']} feed unreachable** — {e['error']}. "
+                     "No documents from this feed are included below, and "
+                     "nothing is cited from it.")
 
     # ── VENDOR + INTENT GROUNDING RESULT ──────────────────
     gq = results.get("grounding")
