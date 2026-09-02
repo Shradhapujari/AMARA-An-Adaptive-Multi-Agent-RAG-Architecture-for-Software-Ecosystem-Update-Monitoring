@@ -99,6 +99,30 @@ class GroundedQuestion:
         return out
 
     @property
+    def retrieval_query(self) -> str:
+        """The single phrasing to send to a general keyword retriever.
+
+        Distinct from `retrieval_phrasings`, and the distinction is the point.
+        That list leads with the bare product name because `/api/v/` matches
+        `q` against product names and nothing else -- "linux" returns 606 rows
+        where "linux version" returns 0. A general retriever scoring over mixed
+        text has the opposite need: the discriminating token is usually the one
+        the product name does not carry.
+
+        Measured on benchmark question 29, "Is Mozilla Firefox v148.0.0 the
+        latest release, or is there a newer one?", retrieving on the bare
+        "firefox" scored recall@5 0.00 against 1.00 for the unmodified
+        question, because "v148.0.0" is what identifies the answer and the
+        product name alone does not narrow 606 Firefox rows to it. Question 4
+        lost the same way on "Tahoe 26.3.1".
+
+        So this keeps the product *and* the content terms: stopwords removed,
+        products first, version strings and other content words retained.
+        """
+        return _keywords.keyword_query(
+            self.temporal.stripped or self.original, self.vendor_names)
+
+    @property
     def citable_kinds(self) -> Sequence[str]:
         return _intent.citable_kinds(self.intent) if self.intent else \
             ("release", "cve", "community")

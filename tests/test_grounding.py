@@ -126,3 +126,50 @@ def test_grounding_is_deterministic():
     a, b = g("Any critical Linux updates today?"), g("Any critical Linux updates today?")
     assert a.rewritten == b.rewritten
     assert a.retrieval_phrasings == b.retrieval_phrasings
+
+
+# ── retrieval_query vs retrieval_phrasings ───────────────────────────────
+#
+# Two accessors because two consumers need opposite things. `/api/v/` matches
+# `q` against product names only -- "linux" returns 606 rows, "linux version"
+# returns 0 -- so `retrieval_phrasings` leads with the bare product. A general
+# keyword retriever scoring over mixed text needs the token that *narrows*,
+# which the product name never is. Benchmark question 29 measured the cost of
+# conflating them: retrieving "Is Mozilla Firefox v148.0.0 the latest release?"
+# as "firefox" scored recall@5 0.00 where the raw question scored 1.00.
+
+def test_retrieval_query_keeps_the_version_that_identifies_the_answer():
+    g = ground("Is Mozilla Firefox v148.0.0 the latest release, or is there a newer one?")
+    assert "v148.0.0" in g.retrieval_query
+    assert "firefox" in g.retrieval_query.lower()
+
+
+def test_retrieval_phrasings_still_lead_with_the_bare_product():
+    # The endpoint-facing accessor must not inherit the change.
+    g = ground("Is Mozilla Firefox v148.0.0 the latest release, or is there a newer one?")
+    assert g.retrieval_phrasings[0] == "firefox"
+    assert g.retrieval_phrasings[0] != g.retrieval_query
+
+
+def test_retrieval_query_drops_stopwords():
+    g = ground("Is Mozilla Firefox v148.0.0 the latest release, or is there a newer one?")
+    for stop in (" is ", " the ", " or ", " there "):
+        assert stop not in f" {g.retrieval_query.lower()} "
+
+
+def test_retrieval_query_keeps_a_build_number():
+    g = ground("When was Google Chrome v145.0.7611 released and on which channel?")
+    assert "v145.0.7611" in g.retrieval_query
+
+
+def test_retrieval_query_survives_an_unknown_product():
+    # No catalog match: still a usable keyword query, not an empty string.
+    g = ground("Does Frobnicator v3.2.1 ship a dark mode?")
+    assert g.retrieval_query.strip()
+    assert "v3.2.1" in g.retrieval_query
+
+
+def test_retrieval_query_is_bounded():
+    g = ground("What are all of the many different changes and fixes and features "
+               "and improvements shipped in the newest Linux kernel release?")
+    assert len(g.retrieval_query.split()) <= 6

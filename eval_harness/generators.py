@@ -467,7 +467,13 @@ class GroundedSingleAgentGenerator(SingleAgentGenerator):
         g = self._ground(query, now=self._now, catalog=self._catalog)
         # The retriever is given the grounded phrasing; `original_query` stays
         # the user's wording, which is what the reranker scores against.
-        retrieval_query = g.retrieval_phrasings[0] if g.retrieval_phrasings else query
+        # `retrieval_query`, not `retrieval_phrasings[0]`: the latter leads with
+        # the bare product name for /api/v/, which matches on product names
+        # only. RetrieverAgent scores over mixed text, where the version string
+        # is what identifies the answer -- retrieving benchmark question 29 on
+        # "firefox" instead of "firefox v148.0.0" scored recall@5 0.00 against
+        # the baseline's 1.00.
+        retrieval_query = g.retrieval_query or query
         pool_k = max(self.top_k * self.POOL_FACTOR, 24)
         with _silenced(self.marag):
             pool = self.retriever.run(retrieval_query, top_k=pool_k,
