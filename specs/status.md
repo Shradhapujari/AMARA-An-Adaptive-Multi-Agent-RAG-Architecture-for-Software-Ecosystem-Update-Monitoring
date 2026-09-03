@@ -5,10 +5,12 @@ Living handoff note. Anyone (or any session) starting work reads this first, the
 what you're picking up. **Update this file at the end of a work session**, not
 just the code.
 
-Last updated: 2026-08-31, ~02:00 (this update written by the infra/eval-side
-session; the paper-side session should re-check `HANDOFF.md`'s own "Last
-updated" line separately — the two docs are drifting apart and someone should
-merge or clearly split them).
+Last updated: **2026-09-03** (Week 2 update — see §10, appended at the end; the
+sections above it are the 2026-08-31 snapshot from the infra/eval-side session
+and are kept verbatim so the record of what was believed when stays readable).
+The paper-side session should re-check `HANDOFF.md`'s own "Last updated" line
+separately — the two docs are drifting apart and someone should merge or
+clearly split them.
 
 ---
 
@@ -258,3 +260,95 @@ convenient half.
 Runs: `run_1788175676` (k=4), `run_1788176239` (k=10), `run_1788178165`
 (k=20), all on `corpus_snapshot_b100_p5`, n=93 scorable (pool recorded).
 
+
+---
+
+## 10. Week 2 update — 2026-09-03 (COMP 291 Week 2, Aug 31 – Sep 4)
+
+Written for the Thursday implementation review. Everything below is checked
+against a run id or a command output, per §6.
+
+### 10.1 Phase 6 is done: the headline at n=300
+
+`specs/status.md` §2 listed Phase 6 ("Headline at n=300") as **not started**.
+It has since completed. **`run_1788302755_7cdc5685d75a`** — the whole
+`data/benchmark_300.json`, no `--limit`, three arms (`marag`,
+`marag:ollama:llama3.1`, `single_agent:ollama:llama3.1`), synthesis model held
+constant, `embed:nomic-embed-text` reranker, `ollama:llama3.1` judge.
+
+Paired Wilcoxon vs `single_agent`, Holm-corrected:
+
+| Metric | marag delta | p_holm | W/T/L |
+|---|---:|---:|---:|
+| nDCG@3 | +0.009 | 0.302 | 16/269/15 |
+| nDCG@5 | +0.001 | 1.000 | 20/250/30 |
+| Recall@5 | -0.011 | 0.502 | 12/267/21 |
+| MRR | +0.006 | 0.667 | 4/290/6 |
+| Faithfulness (template) | **-0.196** | **<0.001** | 33/50/217 |
+| Faithfulness (prose, same retrieval) | +0.002 | 0.787 | 20/262/18 |
+
+What it settles, and what it does not:
+
+1. **The parity result is now well-powered.** The "underpowered at n=100"
+   objection in §5 (MDE) is no longer available for the retrieval family.
+2. **Parity is not the benchmark failing to discriminate.** Only 100 of 300
+   questions (33.3%) produce identical top-k lists; 65.0% retrieve materially
+   different documents; marag's mean candidate pool is **23.1** vs **15.5**.
+   The extra retrieval is real and it is inert — a stronger claim than parity.
+3. **The format confound is confirmed, not suspected.** Same retrieval, prose
+   instead of template, and the 0.196 deficit vanishes.
+4. **It is not a frozen comparison.** The run spans two calendar days (paused
+   at 93/300, resumed), so it is incomparable to any *other* run. The pairing
+   is intact — the three arms execute back-to-back per question, median 129 s —
+   but for byte-identical documents across arms cite the frozen ladder replay
+   `run_1788422938_67177cd53aab` instead.
+5. **Quote the medians, never the means.** Questions 164 and 165 recorded
+   1,000–5,200 s on *every* arm (host stall). Medians: 20.3 s marag, 26.3 s
+   marag_llm, 8.8 s single_agent — **2.3x** and **3.0x**.
+
+Full write-up: `eval_harness/FINDINGS.md` Finding 6; provenance and the caution
+list: `results/PROVENANCE.md`.
+
+### 10.2 Harness fix shipped with it
+
+`eval_harness/run_eval.py` printed hit/miss counts for `record` mode, where
+neither is counted — so a recording pass that stored 13,283 responses reported
+"0 hits, 0 misses" and read as if it had captured nothing. It now reports the
+number of responses actually stored and the directory they went to. Commit
+`2f1107c`.
+
+### 10.3 Phase table, current
+
+| Phase | State | Change since 08-31 |
+|---|---|---|
+| 0 Environment | done | test suite now **629 passing** offline (was 349) |
+| 1 Defects fixed | done | — |
+| 2 Experiment infrastructure | done | — |
+| 3 Frozen ablation, n=10 | passed | — |
+| 5 Ablation, n=100, clean corpus | admissible per-arm | superseded for the headline by the frozen ladder replay |
+| 4 Independent judge | **still blocked** | needs `OPENAI_API_KEY`; unchanged |
+| 6 Headline at n=300 | **done** | §10.1 |
+| 7 Artifact packaging | not started | the corpus snapshots still need a DOI archive |
+| 8 Paper | submitted | TOSEM, 2026-09-01 |
+
+### 10.4 Deployment, re-verified 2026-09-03
+
+<https://software-update-questions.streamlit.app/> — loaded, ran
+"Any critical Linux updates today?" end to end through all agents. Temporal
+Grounder reported *Grounded*, Vendor & Intent resolved *linux · security*,
+Query Rewriter fell back to *Rule-based (fallback)* as expected with no model
+on Streamlit Cloud, and the retrieval agents returned live documents. The
+labelling of the rule-based path is working as `docs/Deployment.md` describes.
+
+### 10.5 What is still open, in priority order
+
+1. **Phase 4, independent judge.** Blocked on `OPENAI_API_KEY` since 08-31.
+   `ollama:llama3.1` still judges a pipeline whose rewriter and one arm are
+   llama3.1. This is the largest live threat to every number in this file.
+2. **Frozen n=300.** §10.1 item 4. A replay run against a single-writer
+   snapshot directory would make the large-sample result citable alongside the
+   ladder rather than only as corroboration.
+3. **Artifact packaging (Phase 7).** The snapshots are the reproducibility
+   asset and none of them are archived. `corpus_snapshot_b300_full_0901` is 84
+   MB / 7,899 files.
+4. **`HANDOFF.md` vs this file.** Still drifting. Merge or split them.

@@ -100,7 +100,7 @@ phrasings are searched and the pools unioned, deduped by URL
 | Configuration | marag nDCG@3 | marag MRR | marag recall@5 |
 |---|---:|---:|---:|
 | `embed`, rewrite replaces query | 0.188 | 0.625 | 0.327 |
-| `embed`, rewrite augments query | **0.973** | **1.000** | **0.933** |
+| `embed`, rewrite augments query | **0.765** | **1.000** | **0.933** |
 
 ---
 
@@ -108,8 +108,13 @@ phrasings are searched and the pools unioned, deduped by URL
 
 | System | nDCG@3 | recall@5 | faithfulness | latency |
 |---|---:|---:|---:|---:|
-| marag (`embed` + union fetch) | 0.973 | 0.933 | 0.705 | 23.1s |
+| marag (`embed` + union fetch) | 0.765 | 0.933 | 0.705 | 23.1s |
 | single_agent | 0.988 | 1.000 | 0.865 | 12.0s |
+
+The nDCG@3 cell read 0.973 in an earlier draft of this file. That figure came
+from `run_1788129818_237950e265eb`, made before the qrels cache key fix;
+re-measured post-fix the same configuration scores 0.765, reproduced by
+`run_1788135008_237950e265eb`. Do not reintroduce 0.973.
 
 The retrieval difference sits well inside the confidence intervals. On this
 set, the multi-agent pipeline costs roughly 2× the latency to reach parity.
@@ -121,6 +126,59 @@ fixed and both regression-tested.
 Note that `single_agent` is unaffected by the union-fetch change — it passes the
 same string as original and rewritten, so the union collapses to one search.
 The comparison is therefore a clean before/after for the multi-agent arm only.
+
+---
+
+## Finding 6 — At n=300 the parity holds, and the faithfulness gap is entirely format
+
+`run_1788302755_7cdc5685d75a`: the whole 300-question benchmark, three arms,
+synthesis model held at `llama3.1`, judge `ollama:llama3.1`, `embed` reranker.
+Paired Wilcoxon against `single_agent`, Holm-corrected:
+
+| Metric | marag | marag_llm | p_holm | W/T/L (marag) |
+|---|---:|---:|---:|---:|
+| nDCG@3 | +0.009 | +0.006 | 0.302 | 16/269/15 |
+| nDCG@5 | +0.001 | -0.002 | 1.000 | 20/250/30 |
+| Recall@5 | -0.011 | -0.013 | 0.502 | 12/267/21 |
+| MRR | +0.006 | +0.006 | 0.667 | 4/290/6 |
+| Faithfulness | **-0.196** | +0.002 | **<0.001** / 0.787 | 33/50/217 |
+
+Three readings, in order of how much they change the argument:
+
+**1. The parity result is now well-powered.** Every retrieval metric is null
+across 300 questions. Findings 1-5 were measured at n=10 and the scaled tables
+at n=100, where a reviewer could fairly answer "underpowered". That answer is no
+longer available.
+
+**2. Parity is not the benchmark failing to discriminate.** The obvious
+objection to a wall of ties is that both arms retrieve the same documents, so
+the test cannot see a difference that exists. It does not hold here: only
+**33.3%** of questions (100 of 300) produce identical top-k lists, **65.0%**
+retrieve materially different documents, and marag's mean candidate pool is
+**23.1** against the baseline's **15.5**. The multi-agent pipeline fetches half
+again as many candidates, and different ones, and no retrieval metric moves.
+That is a stronger statement than parity: the extra retrieval is real and it is
+inert.
+
+**3. The answer-format confound is confirmed, not merely suspected.** The
+template arm loses 0.196 of faithfulness on 217 of 300 questions at p<0.001. The
+*same retrieval* rendered as prose by the same model is indistinguishable from
+the baseline (+0.002, p=0.787). Whatever the template costs, it is not
+grounding. Any future comparison that lets answer format vary between arms is
+measuring formatting.
+
+**Latency, correctly.** Do not use the run's mean latencies: questions 164 and
+165 recorded 1,000-5,200 s on every arm because the host stalled. Medians are
+20.3 s (marag), 26.3 s (marag_llm), 8.8 s (single_agent) — **2.3x** and
+**3.0x** the baseline.
+
+**What this run cannot do.** It is not a frozen comparison. It spans two
+calendar days, so early and late questions saw different live corpora — which
+leaves the *paired* comparison intact (the three arms run back-to-back within
+each question, median 129 s for all three) but makes the run incomparable to any
+other run. For byte-identical documents across arms, the frozen ladder replay
+`run_1788422938_67177cd53aab` is the citable artifact; this run is its
+large-sample corroboration on the coordination question.
 
 ---
 
@@ -146,7 +204,10 @@ The comparison is therefore a clean before/after for the multi-agent arm only.
    fixed. Prior work motivates rewriting for recall; this is a concrete failure
    mode and a cheap remedy.
 3. The multi-agent justification needs different evidence than retrieval
-   parity. The 300-question set is the place to look for it.
+   parity. The 300-question set has now been run (Finding 6) and does not
+   supply it: retrieval is null at n=300 despite the arms retrieving materially
+   different documents. The justification, if there is one, is not a retrieval
+   -quality claim.
 
 ## Reproducing
 

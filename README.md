@@ -45,6 +45,23 @@
 > fluent prose — and vanished when the same retrieval was synthesized through
 > the baseline's own prompt (0.926 vs 0.931).
 >
+> **Both readings now hold at n = 300.** The whole 300-question benchmark has
+> since been run (`run_1788302755_7cdc5685d75a`, three arms, synthesis model
+> held constant). Every retrieval metric is null under a Holm-corrected paired
+> Wilcoxon (nDCG@3 +0.009, *p* = 0.302; recall@5 −0.011, *p* = 0.502), and the
+> parity is *not* the benchmark failing to discriminate: only **33%** of
+> questions produce identical top-k lists, and marag's mean candidate pool is
+> **23.1** against the baseline's **15.5**. The extra retrieval is real and it
+> is inert. The format confound reproduces decisively — the template arm loses
+> **0.196** faithfulness on 217 of 300 questions (*p* < 0.001) while the same
+> retrieval rendered as prose is indistinguishable from the baseline (+0.002,
+> *p* = 0.787). Median latency is 20.3 s (marag) against 8.8 s (baseline),
+> **2.3×**; quote the medians, not the means — two questions recorded
+> host-stall latencies of 1,000–5,200 s on every arm. This run is *not* a
+> frozen comparison (it spans two calendar days); the frozen ladder replay
+> `run_1788422938_67177cd53aab` is the citable artifact for byte-identical
+> documents across arms.
+>
 > Full chain of measurements, confounds, and superseded readings:
 > [`eval_harness/FINDINGS.md`](eval_harness/FINDINGS.md). Every number maps to a
 > run id in [`results/PROVENANCE.md`](results/PROVENANCE.md).
@@ -63,7 +80,7 @@
 | **Live demo** | <https://software-update-questions.streamlit.app/> — public, no key required |
 | **Paper** | Retargeted from the AgenticSE '26 workshop version and submitted to **TOSEM**, special section on Human–AI Collaboration in Software Engineering (1 September 2026). Source: `paper/tosem_amara.tex` |
 | **Framing** | A negative result plus its remedy, not an improvement claim |
-| **Tests** | 477 offline tests, no network required |
+| **Tests** | 629 offline tests, no network required |
 
 ---
 
@@ -293,7 +310,7 @@ run is incomplete and no results are reported from it.**
 ### Tests
 
 ```bash
-python -m pytest tests/ -q      # 477 offline tests, no network required
+python -m pytest tests/ -q      # 629 offline tests, no network required
 ```
 
 Offline in the strict sense: clocks, fetch functions and model clients are all
@@ -521,19 +538,19 @@ We're explicit about these in the paper (§5) — they're real, and good directi
 - **Temporal queries — now handled, with a caveat.** Relative expressions are resolved to absolute dates before retrieval (`temporal.py`), and the resolved window ranks results rather than filtering them. The caveat is that the release endpoint matches `q` against *product names*, so a date in the query text cannot narrow it — the window is applied after the fetch, and an absolute-date question about a specific past day still depends on that day being inside what the endpoint returns.
 - **Vendor extraction failures** on phrases like *"Synology NAS unreachable after upgrade"* — preprocessing strips domain terms. Future fix: embedding-based vendor matching over the full registry.
 - **Community-source reliability.** Reddit is the weakest link. We require ≥10 comments, ≥3 author replies, quality ≥ 0.3, and separate verified from community sources — but a single popular wrong post can still bias an answer.
-- **Evaluation size.** 50 questions is statistically significant but small. A larger multi-ecosystem benchmark is the next study.
+- **Evaluation size — addressed.** The original 50-question set was small; the benchmark now runs at n = 300 across 24 ecosystems. What remains open is not sample size but *frozen*-corpus comparability at that size: the n = 300 run records a live corpus rather than replaying one.
 - **Heuristic thresholds** (θ = 0.30 for retry, the Evaluator scoring weights) were manually tuned. Learned reward models and adaptive threshold selection are in the roadmap.
 
 ---
 
 ## Roadmap
 
-- [x] Larger multi-ecosystem benchmark — `data/benchmark_300.json` (300 questions, 24 ecosystems, 60 per category). Built; the full evaluation run against it is the next step.
+- [x] Larger multi-ecosystem benchmark — `data/benchmark_300.json` (300 questions, 24 ecosystems, 60 per category). Built **and run in full** (`run_1788302755_7cdc5685d75a`); see the correction above and `eval_harness/FINDINGS.md` Finding 6.
 - [x] Rerank candidates against the original question rather than the rewrite — closed the retrieval defect described in the correction above.
 - [x] Union fetch — issue both phrasings and union the candidate pools. This, not reranking, is what closed the defect.
 - [x] Temporal grounding before retrieval (`temporal.py`) with window-aware ranking (`fetch_union.py`).
 - [x] Cited prose answers in the demo (`answer_agent.py`), replacing the bullet template.
-- [ ] Finish the 300-question run (it stopped at 68 of 300; `--resume` exists)
+- [x] Finish the 300-question run — completed at 300/300 via `--resume`; retrieval parity holds and the format confound is confirmed at full sample.
 - [ ] Report the self-reflective (Self-RAG / CRAG) baseline arm — implemented, run incomplete
 - [ ] Measure self-improvement against a frozen corpus, so adaptation is separable from corpus drift
 - [ ] Independent judge (`--judge openai:gpt-4o`) to remove the judge/system model-family overlap
