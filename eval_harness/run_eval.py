@@ -458,9 +458,18 @@ def run(cfg: EvalConfig) -> str:
                                                                 "frozen": False}
     if snap is not None:
         st = cfg_dict["corpus"]
-        print(f"[harness] corpus {st['mode']}: {st['hits']} hits, "
-              f"{st['misses']} misses, {st['corpus_misses']} of them on corpus "
-              f"hosts -> frozen={st['frozen']}")
+        # `record` counts neither hits nor misses -- it passes every call
+        # through and stores the response -- so reporting them reads as "the
+        # recording captured nothing" when it captured everything. Report the
+        # number it actually produced.
+        if st["mode"] == "record":
+            print(f"[harness] corpus record: {st.get('recorded', 0)} responses "
+                  f"stored in {st.get('dir', '?')} (replay this dir to freeze "
+                  f"the corpus; a recording pass is never frozen itself)")
+        else:
+            print(f"[harness] corpus {st['mode']}: {st['hits']} hits, "
+                  f"{st['misses']} misses, {st['corpus_misses']} of them on "
+                  f"corpus hosts -> frozen={st['frozen']}")
         if st["corpus_misses"]:
             print("[harness] WARNING: corpus hosts were read live during replay; "
                   "this run is NOT comparable to other arms. "
