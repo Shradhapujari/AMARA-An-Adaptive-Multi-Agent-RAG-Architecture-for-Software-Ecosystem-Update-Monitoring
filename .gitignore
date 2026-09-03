@@ -49,3 +49,7 @@ acmart-primary-3/
 data/*.db
 data/*.db-wal
 data/*.db-shm
+
+# Presentation artifacts: regenerated per meeting, not needed to run the system
+slides/
+*.pptx
