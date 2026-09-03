@@ -354,7 +354,11 @@ labelling of the rule-based path is working as `docs/Deployment.md` describes.
   `git log --oneline main..<branch>` on every local branch before assuming a
   merged branch is empty.
 - **The review deck now covers the whole project**, not one week — sixteen
-  slides in `slides/`, every number traceable to a run id. See `slides/README.md`.
+  slides, every number traceable to a run id. The deck and its speaker script
+  are kept outside the repository deliberately: they are presentation
+  artifacts, not things the system needs to run, and a binary `.pptx` in git
+  is a merge conflict waiting to happen. The repository holds the evidence
+  they are built from — `eval_harness/FINDINGS.md` and `results/PROVENANCE.md`.
 - **Documentation currency.** `docs/Benchmarks-and-Data.md` still described the
   300-question run as incomplete at 68 of 300; corrected. Test counts in the
   README, `docs/Overview.md` and `docs/Running-the-System.md` read 477 and now
