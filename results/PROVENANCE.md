@@ -93,6 +93,82 @@ judge-labelled relevant documents absent from the multi-agent **candidate pool**
 A top-k version of the second figure gives 23 of 158 (14.6%). An earlier draft
 reported that number against the pool-based 96%, which mixed definitions.
 
+## The ablation ladder (grounding vs coordination)
+
+Two runs, same 100 questions, same eight arms. **Cite the frozen one.**
+
+| Run | Corpus | n | Cache | Role |
+|---|---|---|---|---|
+| `run_1788319745_67177cd53aab` | `record:results/corpus_ladder_20260901`, `frozen=false`, 12,680 responses recorded | 100 | post-fix | recording pass, live fetches |
+| `run_1788422938_67177cd53aab` | `replay:results/corpus_ladder_20260901`, `frozen=true`, 12,344 hits / 240 misses, **0 on document hosts** | 100 | post-fix | **the citable run** |
+
+- Dataset: `data/benchmark_100.json`; seed 42; `top_k=4`
+- Reranker: `embed:nomic-embed-text`; judge: `ollama:qwen2.5:7b-instruct`
+- Generators: `raw:ollama:mistral`, `single_agent:ollama:mistral`,
+  `single_agent_grounded:ollama:mistral`, `rewrite_only:ollama:mistral`,
+  `marag:ollama:mistral`, `marag_retry:ollama:mistral`, `marag`,
+  `single_agent_template` — synthesis model held at `mistral` on every arm that
+  makes an LLM call, and the judge wrote none of the answers.
+
+Only the replay run served every arm byte-identical documents; the recording
+run fetched live and its arms hit the feeds hours apart, which is the same
+not-strictly-paired caveat as item 1 above. The replay reproduces the recording
+run's conclusions to three decimals, so the pair is reported together and the
+frozen run is the one quoted.
+
+Headline results, paired Wilcoxon on per-question differences (frozen run):
+
+| Comparison | Metric | Mean delta | Better / worse | p |
+|---|---|---|---|---|
+| A1 -> A1g (grounding) | nDCG@3 | +0.049 | 14 / 5 | 0.0070 |
+| A1 -> A1g | Recall@3 | +0.051 | 12 / 4 | 0.0035 |
+| A1 -> A1g | nDCG@5 | +0.042 | 15 / 9 | 0.0268 |
+| A1 -> A3 (coordination) | nDCG@5 | +0.018 | 9 / 10 | 0.8721 |
+| A1 -> A3 | Recall@5 | +0.007 | 6 / 8 | 1.0000 |
+| A1g vs A3 | nDCG@5 | -0.024 | 12 / 20 | 0.2172 |
+
+Four things this run establishes that the numbers alone do not say:
+
+1. **`mrr` and `ndcg@1` are null for A1 -> A1g**, not significant, despite
+   nominal p of 0.0431 and 0.1088. Those come from 5 and 3 non-zero pairs, where
+   the smallest two-sided p the signed-rank test can attain is 0.0625 and 0.25 —
+   the normal approximation reported a value below the attainable floor. Same
+   failure mode as the n=10 inversion in Table 1.
+2. **Rung A4 measures nothing on this benchmark.** `marag_llm_retry` returned
+   identical documents *and* identical answers to `marag_llm` on 100 of 100
+   questions. Retry fires below self-quality 0.15; the minimum observed was
+   0.300. Report it as a rung that had no opportunity to act, not as a rung with
+   no effect.
+3. **Rung A2 is the reason A3 looks like progress.** `rewrite_only` scores
+   nDCG@5 0.231 against the baseline's 0.742; `marag_llm` adds union fetch and
+   returns to 0.761, level with the baseline. Union fetch repairs the damage
+   rewriting does rather than improving on single-agent retrieval, and omitting
+   A2 from the ladder hides that.
+4. **Template rendering costs about 0.10 faithfulness**, in both cells of the
+   2x2 and with the tightest intervals in the run: `marag_llm` -> `marag`
+   -0.095 (51 worse / 19 better) and `single_agent` ->
+   `single_agent_template` -0.102 (52 worse / 13 better), both p < 0.0001. Any
+   template-versus-prose comparison measures this before it measures retrieval.
+
+Two limits on what these runs can be compared against:
+
+- **Retrieval numbers collected before commit `ed206a2` (2026-09-01) are void**
+  for any product with an active CVE feed. `fetch_vendor_releases` cut its
+  candidate list to `limit` before the `canonical_score` sort ran, so shipped
+  releases were unreachable — measured, 0 shipped releases in 40 retrieved
+  documents for `q=linux`. Both arms shared that retriever, so the direction of
+  earlier comparisons likely holds while the absolute values do not.
+- **The A1g arm was corrected mid-measurement.** Its first version retrieved on
+  the bare product name and scored *below* the baseline it exists to improve;
+  the version measured here retrieves on products plus content terms
+  (commit `08cbcc2`). A partial run of the earlier arm exists at
+  `run_1788315588_67177cd53aab` (11 questions) and is not reportable.
+
+Latency is not comparable across arms in either run: the recording pass ran
+overnight on a laptop that entered clamshell sleep, so its wall-clock times
+include suspend, and the replay pass reports sub-second times because documents
+and model responses both come from cache.
+
 ## Reproducing an arm
 
 ```bash
