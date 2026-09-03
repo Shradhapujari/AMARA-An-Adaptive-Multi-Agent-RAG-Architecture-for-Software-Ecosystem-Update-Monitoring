@@ -1392,18 +1392,23 @@ union fetch and nothing else.
 
 \begin{table}[t]
 \caption{The ablation ladder. Each rung adds one capability to the rung below,
-so every adjacent pair is a single-factor comparison. Three rungs carry the
-measurements reported in this paper; two are implemented in the released
-harness and not yet run.}
+so every adjacent pair is a single-factor comparison. A1g branches from A1
+rather than continuing the chain: it adds question grounding \emph{without}
+any coordination, which is what separates understanding the question from
+coordinating agents. All rungs are now measured against a frozen corpus
+(Table~\ref{tab:ladder-results}); A4 executed but never triggered, for the
+reason given in Section~\ref{sec:ladder-results}.}
 \label{tab:ladder}
 \begin{tabular}{llll}
 \toprule
 Rung & Arm & Capability added & Status \\
 \midrule
+A0 & \texttt{raw} & none (no retrieval) & Measured \\
 A1 & \texttt{single\_agent} & retrieval on the user's question & Measured \\
-A2 & \texttt{rewrite\_only} & query rewriting & Implemented \\
+A1g & \texttt{single\_agent\_grounded} & question grounding, no coordination & Measured \\
+A2 & \texttt{rewrite\_only} & query rewriting & Measured \\
 A3 & \texttt{marag\_llm} & union fetch over both phrasings & Measured \\
-A4 & \texttt{marag\_llm\_retry} & Orchestrator retry & Implemented \\
+A4 & \texttt{marag\_llm\_retry} & Orchestrator retry & Never triggered \\
 A5 & \texttt{marag} & template rendering & Measured \\
 \bottomrule
 \end{tabular}
@@ -1423,16 +1428,15 @@ from the retrieved documents, and it is available in the released harness as
 \texttt{single\_agent\_template}. With all four cells, rendering and retrieval
 become main effects with an interaction term.
 
-We report no measurement for A2, A4, or the fourth cell here. They are
-implemented and unit-tested in the released harness, and the ladder is the
-protocol we recommend for any subsequent evaluation of this architecture rather
-than a result of this one. Two constraints apply to such a run. Because the
-retrieval endpoints are live, every arm must execute against a recorded corpus
-snapshot in strict replay, or the rungs will differ by corpus drift as well as
-by capability. And if the Self-Improvement Memory is ever attached as a further
-rung, term-weight learning makes each question's outcome depend on the
-questions preceding it; per-question differences then cease to be exchangeable
-and the paired tests used throughout this section no longer apply as written.
+A2, A4, and the fourth cell are now measured, together with A1g, and
+Section~\ref{sec:ladder-results} reports them. The run satisfies the constraint
+this design imposes: because the retrieval endpoints are live, every arm
+executed against a recorded corpus snapshot in replay, so the rungs differ by
+capability and not by corpus drift. One constraint remains open. If the
+Self-Improvement Memory is ever attached as a further rung, term-weight
+learning makes each question's outcome depend on the questions preceding it;
+per-question differences then cease to be exchangeable and the paired tests
+used throughout this section no longer apply as written.
 
 \section{Results}\label{sec:results}
 
@@ -1761,6 +1765,19 @@ than from recomputing one on the other, but they are the same measurement, and
 the union remedy holds at this scale; the residual is the ordinary variation of
 two systems retrieving from live sources.
 
+One qualification applies to the absolute values in this table and in
+Table~\ref{tab:gt-run}, though not to the comparison they support. The
+release-fetching path truncated its candidate list to the requested limit
+\emph{before} applying the ranking function meant to demote advisory records,
+so for any product with an active CVE feed the shipped releases were unreachable:
+measured on the repaired code, a query for \texttt{linux} returned no shipped
+release at all within forty retrieved documents. Both arms called the same
+retriever, so the ordering these tables report is unaffected and the ladder of
+Section~\ref{sec:ladder-results}, run after the repair, reaches the same
+conclusion. The absolute figures, however, were produced by a retriever that
+could not reach part of its corpus, and should be read as a lower bound rather
+than as this architecture's ceiling.
+
 \begin{table}[t]
 \caption{Answer quality and cost ($n=100$), LLM-judged. \texttt{marag} and
 \texttt{marag\_llm} share a retrieval pipeline and differ only in how the answer
@@ -1853,6 +1870,121 @@ On cost, the multi-agent pipeline takes approximately twice the median
 per-question latency of the baseline (19.7\,s versus 9.6\,s). This reflects the
 rewriter's generation call, the evaluator pass, and the additional retrieval
 calls the union incurs.
+
+\subsection{The Complete Ladder}\label{sec:ladder-results}
+
+Section~\ref{sec:ladder} set out the ladder as a protocol and reported three of
+its rungs. We now run all of them, against a corpus frozen for the purpose, and
+add the rung the protocol was missing.
+
+Every arm answered the same 100 questions with synthesis held at
+\texttt{mistral} wherever a generation call occurs, reranking at
+\texttt{embed:nomic-embed-text}, and judging by
+\texttt{qwen2.5:7b-instruct}, a model that wrote none of the answers. The
+documents were served from a snapshot recorded in a preceding pass: 12,344
+snapshot hits against 240 misses, none of the misses on a document host, so
+every arm saw byte-identical documents. This is the strict-replay condition
+Section~\ref{sec:ladder} required, and it removes the caveat attached to
+Table~\ref{tab:scaled-retrieval}, whose arms queried live endpoints and were
+therefore comparable in direction but not paired question-by-question.
+
+\begin{table}[t]
+\caption{Every rung of the ladder on the 100-question benchmark, against a
+frozen corpus. A4 reproduces A3 to three decimals on every metric because its
+retry never triggered. A0 retrieves nothing, so its faithfulness has no
+retrieved documents to be unfaithful to and is not comparable to the rest of
+the column.}
+\label{tab:ladder-results}
+\begin{tabular}{llrrrrr}
+\toprule
+Rung & Arm & nDCG@3 & nDCG@5 & MRR & Recall@5 & Faithfulness \\
+\midrule
+A0  & \texttt{raw}                   & ---   & ---   & ---   & ---   & 0.838 \\
+A1  & \texttt{single\_agent}         & 0.731 & 0.742 & 0.806 & 0.731 & 0.750 \\
+A1g & \texttt{single\_agent\_grounded} & \textbf{0.780} & \textbf{0.784} & 0.828 & \textbf{0.767} & 0.768 \\
+A2  & \texttt{rewrite\_only}         & 0.210 & 0.231 & 0.352 & 0.301 & 0.785 \\
+A3  & \texttt{marag\_llm}            & 0.752 & 0.761 & 0.822 & 0.738 & 0.754 \\
+A4  & \texttt{marag\_llm\_retry}     & 0.752 & 0.761 & 0.822 & 0.738 & 0.754 \\
+A5  & \texttt{marag}                 & 0.752 & 0.761 & 0.822 & 0.738 & 0.659 \\
+2$\times$2 & \texttt{single\_agent\_template} & 0.731 & 0.742 & 0.806 & 0.731 & 0.648 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Because the arms are paired within the run, the aggregate means understate what
+is available: the per-question differences can be tested directly.
+Table~\ref{tab:ladder-paired} reports them under a Wilcoxon signed-rank test.
+
+\begin{table}[t]
+\caption{Paired per-question differences, Wilcoxon signed-rank. ``Better'' and
+``worse'' count the questions on which the second arm beat or lost to the
+first; the remainder tie. Rows marked $\dagger$ report a $p$ below the smallest
+value the test can attain at that number of non-zero pairs (0.0625 at five
+pairs, 0.25 at three): they are null, not significant.}
+\label{tab:ladder-paired}
+\begin{tabular}{llrrrl}
+\toprule
+Comparison & Metric & Mean $\Delta$ & Better & Worse & $p$ \\
+\midrule
+A1 $\to$ A1g  & nDCG@3   & $+0.049$ & 14 & 5  & \textbf{0.0070} \\
+A1 $\to$ A1g  & Recall@3 & $+0.051$ & 12 & 4  & \textbf{0.0035} \\
+A1 $\to$ A1g  & nDCG@5   & $+0.042$ & 15 & 9  & \textbf{0.0268} \\
+A1 $\to$ A1g  & Recall@5 & $+0.037$ & 13 & 9  & 0.0534 \\
+A1 $\to$ A1g  & MRR      & $+0.023$ & 5  & 0  & 0.0431$^\dagger$ \\
+A1 $\to$ A1g  & nDCG@1   & $+0.027$ & 3  & 0  & 0.1088$^\dagger$ \\
+\midrule
+A1 $\to$ A3   & nDCG@5   & $+0.018$ & 9  & 10 & 0.8721 \\
+A1 $\to$ A3   & Recall@5 & $+0.007$ & 6  & 8  & 1.0000 \\
+A1 $\to$ A3   & MRR      & $+0.016$ & 4  & 4  & 0.4838 \\
+\midrule
+A1g vs.\ A3   & nDCG@5   & $-0.024$ & 12 & 20 & 0.2172 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Four results follow, and three of them change what the earlier sections can
+claim.
+
+\textbf{Coordination shows no retrieval benefit.} A1~$\to$~A3 is null on every
+metric: nine questions better, ten worse, $p=0.87$ on nDCG@5 and $p=1.00$ on
+Recall@5. This is not a small effect the sample was too thin to resolve; it is
+the absence of one, and it agrees with the live-endpoint result of
+Table~\ref{tab:scaled-retrieval} under a condition that removes corpus drift as
+an explanation.
+
+\textbf{Grounding the question does.} A1~$\to$~A1g is significant at $k=3$ and
+$k=5$, and the gain is concentrated in the \texttt{releases} category
+(nDCG@1 0.567 to 0.700), which is where the record-type confusion of
+Section~\ref{sec:datasources} does its damage. The comparison A1g versus A3
+completes the argument from the other side: a single agent that understands the
+question is statistically indistinguishable from the full pipeline
+($p=0.22$).
+
+\textbf{The Orchestrator's retry never triggered.} A4 returned identical
+documents \emph{and} identical answers to A3 on all 100 questions. The retry
+fires when the Evaluator's quality score falls below 0.15; the minimum observed
+across the benchmark was 0.300. Rung A4 is therefore reported as executed and
+never triggered rather than as measured with no effect --- the distinction
+matters, because a benchmark that exercises the retry would have to contain
+questions this retriever handles badly, and this one does not.
+
+\textbf{Rewriting alone is destructive, and the union is its repair.} A2 scores
+nDCG@5 0.231 against A1's 0.742: rewriting without the union fetch collapses
+retrieval. A3 adds the union and returns to 0.761, level with the baseline.
+This reframes the union fetch of Section~\ref{sec:union-fetch}. It is not an
+improvement over single-agent retrieval; it is the mechanism that repairs the
+damage rewriting causes, and the pair reads as progress only when A2 is omitted
+from the ladder.
+
+Finally, the fourth cell of the rendering~$\times$~retrieval design is now
+populated, and rendering is estimable as a main effect rather than inferred
+across two arms. Template rendering costs approximately 0.10 faithfulness in
+both cells: $-0.095$ from A3 to A5 (51 questions worse, 19 better) and $-0.102$
+from A1 to \texttt{single\_agent\_template} (52 worse, 13 better), both
+$p<0.0001$. The effect is the same magnitude under either retrieval pipeline,
+which confirms it as a property of the rendering and not of the architecture.
+Any comparison that places a template arm against a prose arm measures this
+before it measures retrieval.
 
 \subsection{Observations Carried Over From the Earlier Evaluation}
 \label{sec:carried-over}
