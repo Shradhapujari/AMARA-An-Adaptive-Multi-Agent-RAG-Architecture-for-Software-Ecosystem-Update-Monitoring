@@ -340,7 +340,28 @@ Query Rewriter fell back to *Rule-based (fallback)* as expected with no model
 on Streamlit Cloud, and the retrieval agents returned live documents. The
 labelling of the rule-based path is working as `docs/Deployment.md` describes.
 
-### 10.5 What is still open, in priority order
+### 10.5 Also landed today
+
+- **The paper reports every rung of the ladder** (`4d13730`, merged as PR #13).
+  Section 3.6 had said A2, A4 and the fourth rendering cell were implemented
+  but not run, on two conditions; the first — a recorded snapshot in replay, so
+  rungs differ by capability rather than drift — is now met. New Section 4.5
+  reports the frozen run, Table 2 gains A0 and A1g, and Tables 6 and 8 are
+  qualified as a lower bound because they predate the release-fetch repair.
+  **This commit sat unpushed for the whole day**: it was made on
+  `eval/benchmark-300-complete` roughly a minute after that branch had already
+  been pushed and PR'd, so the merge to main did not include it. Check
+  `git log --oneline main..<branch>` on every local branch before assuming a
+  merged branch is empty.
+- **The review deck now covers the whole project**, not one week — sixteen
+  slides in `slides/`, every number traceable to a run id. See `slides/README.md`.
+- **Documentation currency.** `docs/Benchmarks-and-Data.md` still described the
+  300-question run as incomplete at 68 of 300; corrected. Test counts in the
+  README, `docs/Overview.md` and `docs/Running-the-System.md` read 477 and now
+  read 629, verified from a clean clone (628 passed, 1 skipped after
+  `pip install -r requirements.txt` into a fresh venv).
+
+### 10.6 What is still open, in priority order
 
 1. **Phase 4, independent judge.** Blocked on `OPENAI_API_KEY` since 08-31.
    `ollama:llama3.1` still judges a pipeline whose rewriter and one arm are
