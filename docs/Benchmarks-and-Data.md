@@ -6,7 +6,7 @@
 |---|---:|---|---|
 | `validation_gt.json` | 10 | Hand-judged ground truth | Directional only; wide, overlapping CIs |
 | `data/benchmark_100.json` | 100 | 21 ecosystems | The scaled evaluation reported in the paper |
-| `data/benchmark_300.json` | 300 | 24 ecosystems, 60 per category | Built to settle the claim at a defensible size; the run is incomplete (68 of 300) |
+| `data/benchmark_300.json` | 300 | 24 ecosystems, 60 per category | The headline evaluation; run in full (`run_1788302755_7cdc5685d75a`) |
 | `table_50_questions.json` | 50 | Original evaluation | The +17.2% result |
 
 Categories: releases · bugs · security · community · general.

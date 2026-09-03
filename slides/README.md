@@ -7,4 +7,4 @@ review; the numbers in it are traceable to a run id in
 
 | Date | Deck | Covers |
 |---|---|---|
-| 2026-09-03 | [Week 2 implementation review](2026-09-03-week2-implementation-review.pptx) | The completed 300-question run (Finding 6), the format confound confirmed, deployment re-verified |
+| 2026-09-03 | [Week 2 implementation review](2026-09-03-week2-implementation-review.pptx) | Full project review: architecture, corpus and question sets, the harness, the model roster, the six-finding evidence chain, the n=300 headline, the frozen ablation ladder, the top-k sweep, grounding, what changed in the paper, the caveat register, and the plan through Week 15 |
