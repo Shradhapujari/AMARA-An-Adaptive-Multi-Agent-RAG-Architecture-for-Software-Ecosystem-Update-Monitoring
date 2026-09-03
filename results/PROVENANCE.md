@@ -93,6 +93,68 @@ judge-labelled relevant documents absent from the multi-agent **candidate pool**
 A top-k version of the second figure gives 23 of 158 (14.6%). An earlier draft
 reported that number against the pool-based 96%, which mixed definitions.
 
+## The full 300-question run
+
+`run_1788302755_7cdc5685d75a`, n=300, post-fix. The largest sample in the
+project, and the run that settles open item 1 of the handoff.
+
+- Dataset: `data/benchmark_300.json` (the whole file, no `--limit`); seed 42; `top_k=4`
+- Generators: `marag`, `marag:ollama:llama3.1` (reported as `marag_llm`),
+  `single_agent:ollama:llama3.1` — synthesis model held constant
+- Reranker: `embed:nomic-embed-text`; judge: `ollama:llama3.1`
+- Corpus: `record:data/corpus_snapshot_b300_full_0901`, 13,283 responses
+  recorded (7,899 files, 84 MB), `frozen=false`
+
+Paired Wilcoxon against `single_agent`, Holm-corrected across the family:
+
+| Metric | Arm | Mean delta | W/T/L | p_holm |
+|---|---|---:|---:|---:|
+| nDCG@3 | marag | +0.009 | 16/269/15 | 0.302 |
+| nDCG@3 | marag_llm | +0.006 | 16/269/15 | 0.302 |
+| nDCG@5 | marag | +0.001 | 20/250/30 | 1.000 |
+| Recall@5 | marag | -0.011 | 12/267/21 | 0.502 |
+| MRR | marag | +0.006 | 4/290/6 | 0.667 |
+| Faithfulness | marag (template) | **-0.196** | 33/50/217 | **<0.001** |
+| Faithfulness | marag_llm (prose) | +0.002 | 20/262/18 | 0.787 |
+| Answer relevance | marag | +0.011 | 22/259/19 | 0.477 |
+
+Three things this run establishes that the earlier n=100 tables could not:
+
+1. **Retrieval parity is now well-powered.** Every retrieval metric is null at
+   n=300 with tie counts of 250-290 out of 300. The n=100 tables showed the same
+   thing with intervals wide enough that a reader could dismiss them as
+   underpowered; this sample removes that objection.
+2. **The parity is not an artifact of the arms retrieving the same documents.**
+   Only 100 of 300 questions (33.3%) produce identical top-k document lists
+   across `marag` and `single_agent`; 195 (65.0%) retrieve materially different
+   documents, and `marag`'s mean candidate pool is 23.1 against the baseline's
+   15.5. The multi-agent pipeline fetches half again as many candidates and
+   different ones, and it does not move any retrieval metric.
+3. **The answer-format confound reproduces decisively.** The template arm loses
+   0.196 of faithfulness across 217 of 300 questions at p<0.001, while the same
+   retrieval rendered as prose is indistinguishable from the baseline
+   (+0.002, p=0.787). At n=100 this was a three-number table; here it is a
+   well-powered paired test.
+
+**Two cautions on this artifact.**
+
+*Latency.* Do not quote the mean latencies from `report.md` (55.6 / 50.4 /
+22.6 s). Questions 164 and 165 recorded 1,000-5,200 s on every arm — the host
+stalled, not the systems. Medians are 20.3 / 26.3 / 8.8 s, giving **2.3x** for
+`marag` and **3.0x** for `marag_llm` over the baseline. Use the medians.
+
+*Pairing.* The run spans two calendar days (paused at 93/300, resumed), so
+questions early and late in the file saw different live corpora. This does not
+break the paired comparison: within a question the three arms execute
+back-to-back (median 129 s for all three), so both systems see the same corpus
+for the same question. It does mean the run is not comparable to any other run,
+and the recorded snapshot is a record of what was fetched, not a frozen corpus
+(`frozen=false` — record mode never sets it true).
+
+For a frozen, byte-identical-documents comparison, cite the ladder below
+instead. This run is the large-sample corroboration of its coordination result,
+not a replacement for it.
+
 ## The ablation ladder (grounding vs coordination)
 
 Two runs, same 100 questions, same eight arms. **Cite the frozen one.**
